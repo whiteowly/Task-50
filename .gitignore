@@ -1,0 +1,56 @@
+# =========================
+# Node.js (Backend & Frontend)
+# =========================
+# Dependencies
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment Variables (Keep sensitive data out of version control)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# =========================
+# Vue / Vite (Frontend Build)
+# =========================
+# Build outputs
+dist/
+dist-ssr/
+test-results/
+
+# =========================
+# C++ / Compiled Files
+# =========================
+# Compiled binaries and object files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Specific to your g++ build task ("-o main")
+main
+main.exe
+
+# =========================
+# OS / Editor Specific
+# =========================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS (just in case)
+.DS_Store
+
+# VS Code (Optional: uncomment if you don't want to share workspace settings)
+# .vscode/

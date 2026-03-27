@@ -1,0 +1,21 @@
+{
+  "name": "forgeops-hub-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@koa/cors": "^5.0.0",
+    "bcryptjs": "^2.4.3",
+    "dayjs": "^1.11.13",
+    "jsonwebtoken": "^9.0.2",
+    "koa": "^2.15.3",
+    "koa-body": "^6.0.1",
+    "koa-router": "^12.0.1",
+    "mysql2": "^3.11.3",
+    "uuid": "^10.0.0"
+  }
+}

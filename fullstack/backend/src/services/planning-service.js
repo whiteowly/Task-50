@@ -1,0 +1,169 @@
+import { pool, withTx } from "../db.js";
+import { AppError, assert } from "../utils/errors.js";
+import { writeAudit } from "./audit-service.js";
+
+export async function upsertMpsPlan(input, actor) {
+  assert(input.siteId, 400, "siteId is required");
+  assert(Array.isArray(input.weeks) && input.weeks.length === 12, 400, "Exactly 12 weeks required");
+  await pool.execute(
+    `INSERT INTO production_plans
+      (site_id, plan_name, start_week, status, created_by)
+     VALUES (?, ?, ?, 'DRAFT', ?)
+     ON DUPLICATE KEY UPDATE plan_name = VALUES(plan_name), updated_at = NOW()`,
+    [input.siteId, input.planName, input.startWeek, actor.id]
+  );
+
+  const [[plan]] = await pool.execute(
+    `SELECT id
+     FROM production_plans
+     WHERE site_id = ? AND start_week = ?`,
+    [input.siteId, input.startWeek]
+  );
+  const planId = plan.id;
+  for (const week of input.weeks) {
+    await pool.execute(
+      `INSERT INTO production_plan_lines
+        (plan_id, week_index, item_code, planned_qty)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE planned_qty = VALUES(planned_qty)`,
+      [planId, week.weekIndex, week.itemCode, week.plannedQty]
+    );
+  }
+
+  await writeAudit({
+    actorUserId: actor.id,
+    action: "UPDATE",
+    entityType: "production_plan",
+    entityId: planId,
+    beforeValue: null,
+    afterValue: input
+  });
+  return { id: planId };
+}
+
+export async function runMrp(planId) {
+  const [planLines] = await pool.execute(
+    `SELECT ppl.item_code, SUM(ppl.planned_qty) AS total_qty
+     FROM production_plan_lines ppl
+     WHERE ppl.plan_id = ?
+     GROUP BY ppl.item_code`,
+    [planId]
+  );
+
+  const requirements = [];
+  for (const line of planLines) {
+    const [bom] = await pool.execute(
+      `SELECT component_code, qty_per
+       FROM bill_of_materials
+       WHERE parent_item_code = ?`,
+      [line.item_code]
+    );
+    for (const comp of bom) {
+      const required = Number(comp.qty_per) * Number(line.total_qty);
+      const [[stock]] = await pool.execute(
+        `SELECT COALESCE(SUM(occupied_qty), 0) AS on_hand
+         FROM inventory_locations
+         WHERE current_sku = ?`,
+        [comp.component_code]
+      );
+      requirements.push({
+        componentCode: comp.component_code,
+        requiredQty: required,
+        onHandQty: Number(stock.on_hand),
+        shortageQty: Math.max(0, required - Number(stock.on_hand))
+      });
+    }
+  }
+  return requirements;
+}
+
+export async function createWorkOrder(input, actor) {
+  const [result] = await pool.execute(
+    `INSERT INTO work_orders
+      (plan_id, item_code, qty_target, status, scheduled_start, scheduled_end, created_by)
+     VALUES (?, ?, ?, 'OPEN', ?, ?, ?)`,
+    [input.planId, input.itemCode, input.qtyTarget, input.scheduledStart, input.scheduledEnd, actor.id]
+  );
+  await writeAudit({
+    actorUserId: actor.id,
+    action: "CREATE",
+    entityType: "work_order",
+    entityId: result.insertId,
+    beforeValue: null,
+    afterValue: input
+  });
+  return { id: result.insertId };
+}
+
+export async function logWorkOrderEvent(workOrderId, input, actor) {
+  assert(["PRODUCTION", "REWORK", "DOWNTIME"].includes(input.eventType), 400, "Invalid event type");
+  if (input.eventType === "DOWNTIME") {
+    assert(input.reasonCode, 400, "Downtime requires reason code");
+  }
+  await pool.execute(
+    `INSERT INTO work_order_events
+      (work_order_id, event_type, qty, reason_code, notes, created_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [workOrderId, input.eventType, input.qty || 0, input.reasonCode || null, input.notes || null, actor.id]
+  );
+  await writeAudit({
+    actorUserId: actor.id,
+    action: "CREATE",
+    entityType: "work_order_event",
+    entityId: workOrderId,
+    beforeValue: null,
+    afterValue: input
+  });
+}
+
+export async function requestPlanAdjustment(planId, input, actor) {
+  assert(input.reasonCode, 400, "Reason code required");
+  const [result] = await pool.execute(
+    `INSERT INTO plan_adjustments
+      (plan_id, reason_code, requested_by, status, before_snapshot, after_snapshot)
+     VALUES (?, ?, ?, 'PENDING', ?, ?)`,
+    [planId, input.reasonCode, actor.id, JSON.stringify(input.before), JSON.stringify(input.after)]
+  );
+  await writeAudit({
+    actorUserId: actor.id,
+    action: "UPDATE",
+    entityType: "plan_adjustment",
+    entityId: result.insertId,
+    beforeValue: input.before,
+    afterValue: input.after
+  });
+  return { id: result.insertId };
+}
+
+export async function approvePlanAdjustment(adjustmentId, actor) {
+  return withTx(async (conn) => {
+    const [rows] = await conn.execute(
+      `SELECT id, plan_id, after_snapshot, status
+       FROM plan_adjustments WHERE id = ? FOR UPDATE`,
+      [adjustmentId]
+    );
+    assert(rows.length, 404, "Adjustment not found");
+    const adj = rows[0];
+    assert(adj.status === "PENDING", 409, "Adjustment is not pending");
+    if (!["ADMIN", "PLANNER_SUPERVISOR"].includes(actor.role)) {
+      throw new AppError(403, "Supervisor approval required");
+    }
+
+    await conn.execute(
+      `UPDATE plan_adjustments
+       SET status = 'APPROVED', approved_by = ?, approved_at = NOW()
+       WHERE id = ?`,
+      [actor.id, adjustmentId]
+    );
+    await writeAudit({
+      actorUserId: actor.id,
+      action: "APPROVE",
+      entityType: "plan_adjustment",
+      entityId: adjustmentId,
+      beforeValue: { status: "PENDING" },
+      afterValue: { status: "APPROVED" },
+      conn
+    });
+    return { ok: true };
+  });
+}
