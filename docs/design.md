@@ -1,8 +1,8 @@
 # Design Document
 
 ## Architecture
-- Vue.js SPA (`fullstack/frontend`) runs on local network and calls Koa APIs.
-- Koa backend (`fullstack/backend`) provides domain APIs for auth, receiving, planning, HR, notifications, search, and rules.
+- Vue.js SPA (`repo/frontend`) runs on local network and calls Koa APIs.
+- Koa backend (`repo/backend`) provides domain APIs for auth, receiving, planning, HR, notifications, search, and rules.
 - MySQL stores transactional and reference data; audit logs are append-only.
 - Offline messaging writes export files to local storage and tracks retry status in DB.
 
