@@ -2,6 +2,30 @@
 
 Offline-ready full-stack site for inbound receiving, production planning, and workforce onboarding.
 
+## Docker Quick Start
+
+From this `repo` directory, start everything with one command:
+
+```bash
+docker compose up
+```
+
+No manual dependency setup is required. The compose file provisions DB schema/seed and starts all services.
+
+### Services
+
+- Frontend (Nginx): `http://localhost:5173`
+- Backend API (Koa): `http://localhost:4000/api`
+- MySQL: `localhost:3306`
+
+### Verify startup
+
+1. Wait for all services to start.
+2. Open `http://localhost:5173` and confirm the login screen appears.
+3. Open `http://localhost:4000/api/health` and verify `{ "ok": true }`.
+4. Sign in with seeded demo credentials:
+   - `admin` / `AdminPassw0rd!`
+
 ## Stack
 
 - Frontend: Vue 3 + Pinia + Vue Router (Vite)
@@ -27,6 +51,8 @@ Offline-ready full-stack site for inbound receiving, production planning, and wo
 - Versioned scoring rules and weighted GPA scoring with recalc backtracking flags
 
 ## Setup
+
+Use this section only for local non-Docker runs.
 
 1. Create a MySQL database named `forgeops`.
 2. Apply `backend/schema.sql`, then `backend/seed.sql`.
@@ -114,7 +140,6 @@ has the explicit `SENSITIVE_DATA_VIEW` permission.
 Linux/macOS/Git Bash:
 
 ```bash
-cd repo
 node --test --test-concurrency=1 unit_tests/*.test.js
 node --test --test-concurrency=1 API_tests/*.api.test.js
 node --test --test-concurrency=1 integration_tests/*.test.js
@@ -126,7 +151,6 @@ npm run build
 Windows PowerShell/CMD:
 
 ```powershell
-cd repo
 node --test --test-concurrency=1 unit_tests/*.test.js
 node --test --test-concurrency=1 API_tests/*.api.test.js
 node --test --test-concurrency=1 integration_tests/*.test.js
@@ -140,14 +164,12 @@ npm.cmd run test
 Linux/macOS/Git Bash:
 
 ```bash
-cd repo
 ./run_tests.sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-cd repo
 .\run_tests.ps1
 ```
 
@@ -162,14 +184,12 @@ Run smoke profile:
 Linux/macOS/Git Bash:
 
 ```bash
-cd repo
 node --test --test-concurrency=1 integration_tests/db_smoke.test.js
 ```
 
 Windows PowerShell:
 
 ```powershell
-cd repo
 node --test --test-concurrency=1 integration_tests/db_smoke.test.js
 ```
 
@@ -192,14 +212,12 @@ Optional credential overrides (defaults match `backend/scripts/seed-users.js`):
 Linux/macOS/Git Bash:
 
 ```bash
-cd repo
 RUN_DB_INTEGRATION_TESTS=1 node --test --test-concurrency=1 integration_tests/*.test.js
 ```
 
 Windows PowerShell:
 
 ```powershell
-cd repo
 $env:DB_HOST="127.0.0.1"
 $env:DB_PORT="3306"
 $env:DB_USER="root"
