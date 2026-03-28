@@ -9,7 +9,11 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "e2e": "playwright test && playwright test -c playwright.real.config.js",
+    "e2e:headed": "playwright test --headed",
+    "e2e:install": "playwright install chromium",
+    "e2e:real": "playwright test -c playwright.real.config.js"
   },
   "dependencies": {
     "pinia": "^2.2.4",
@@ -17,6 +21,7 @@
     "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.54.2",
     "@vue/test-utils": "^2.4.6",
     "@vitejs/plugin-vue": "^5.1.4",
     "jsdom": "^25.0.1",

@@ -16,6 +16,19 @@ defineProps({
     type: String,
     default: ""
   },
+  isSubmittingCandidate: {
+    type: Boolean,
+    default: false
+  },
+  candidateOutcome: {
+    type: Object,
+    default: () => ({
+      duplicateFlag: false,
+      duplicateDetails: "",
+      completeness: null,
+      classification: ""
+    })
+  },
   onCandidateFileChange: {
     type: Function,
     required: true
@@ -46,8 +59,20 @@ defineProps({
         :placeholder="`${field.label}${field.is_required ? ' *' : ''}`"
       />
     </div>
-    <button @click="onSubmitCandidate">Submit application</button>
+    <button :disabled="isSubmittingCandidate" @click="onSubmitCandidate">
+      {{ isSubmittingCandidate ? "Submitting..." : "Submit application" }}
+    </button>
     <p v-if="lastCandidateId">Application ID: {{ lastCandidateId }}</p>
+    <p v-if="candidateOutcome.duplicateDetails">{{ candidateOutcome.duplicateDetails }}</p>
+    <p v-if="candidateOutcome.completeness">
+      Completeness: {{ candidateOutcome.completeness.complete ? "Complete" : "Incomplete" }}
+    </p>
+    <p
+      v-if="candidateOutcome.completeness && candidateOutcome.completeness.missingRequiredClasses?.length"
+    >
+      Missing required: {{ candidateOutcome.completeness.missingRequiredClasses.join(", ") }}
+    </p>
+    <p v-if="candidateOutcome.classification">{{ candidateOutcome.classification }}</p>
     <p v-if="candidateUploadStatus">{{ candidateUploadStatus }}</p>
   </article>
 </template>

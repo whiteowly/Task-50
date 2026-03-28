@@ -6,6 +6,7 @@ import app from "../backend/src/app.js";
 import { pool } from "../backend/src/db.js";
 import { config } from "../backend/src/config.js";
 import { encryptString } from "../backend/src/utils/crypto.js";
+import { issueCandidateUploadToken } from "../backend/src/services/hr-service.js";
 
 const originalExecute = pool.execute;
 
@@ -150,11 +151,7 @@ test("interviewer can read assigned candidate but not unassigned", async () => {
 });
 
 test("candidate attachment upload succeeds with candidate upload token", async () => {
-  const uploadToken = jwt.sign(
-    { purpose: "CANDIDATE_ATTACHMENT", candidateId: "201" },
-    config.jwtSecret,
-    { expiresIn: 3600 }
-  );
+  const uploadToken = issueCandidateUploadToken("201");
 
   pool.execute = async (sql) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
@@ -180,6 +177,74 @@ test("candidate attachment upload succeeds with candidate upload token", async (
   const body = await response.json();
   assert.equal(response.status, 200);
   assert.ok(body.id);
+
+  await new Promise((resolve) => server.close(resolve));
+  pool.execute = originalExecute;
+});
+
+test("candidate upload token replay is blocked after first successful use", async () => {
+  const uploadToken = issueCandidateUploadToken("202");
+
+  pool.execute = async (sql) => {
+    if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
+    if (sql.includes("SELECT id, source FROM candidates WHERE id = ?")) return [[{ id: 202, source: "PORTAL" }]];
+    if (sql.includes("INSERT INTO candidate_attachments")) return [{ affectedRows: 1 }];
+    if (sql.includes("FROM application_attachment_requirements")) return [[{ classification: "RESUME" }]];
+    if (sql.includes("FROM candidate_attachments")) return [[{ classification: "RESUME", count: 1 }]];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const { server, baseUrl } = await startServer();
+
+  const firstUpload = new FormData();
+  firstUpload.append("file", new File(["png-bytes"], "resume.png", { type: "image/png" }));
+  const firstRes = await fetch(`${baseUrl}/api/hr/applications/202/attachments`, {
+    method: "POST",
+    headers: { "x-candidate-upload-token": uploadToken },
+    body: firstUpload
+  });
+  assert.equal(firstRes.status, 200);
+
+  const replayUpload = new FormData();
+  replayUpload.append("file", new File(["png-bytes"], "resume2.png", { type: "image/png" }));
+  const replayRes = await fetch(`${baseUrl}/api/hr/applications/202/attachments`, {
+    method: "POST",
+    headers: { "x-candidate-upload-token": uploadToken },
+    body: replayUpload
+  });
+  const replayBody = await replayRes.json();
+  assert.equal(replayRes.status, 403);
+  assert.match(replayBody.error, /authorized user or valid candidate upload token/);
+
+  await new Promise((resolve) => server.close(resolve));
+  pool.execute = originalExecute;
+});
+
+test("candidate upload rejects expired token", async () => {
+  const expiredToken = jwt.sign(
+    { purpose: "CANDIDATE_ATTACHMENT", candidateId: "203", jti: "expired-jti" },
+    config.jwtSecret,
+    { expiresIn: -1 }
+  );
+
+  pool.execute = async (sql) => {
+    if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const { server, baseUrl } = await startServer();
+  const formData = new FormData();
+  formData.append("file", new File(["png-bytes"], "resume.png", { type: "image/png" }));
+
+  const response = await fetch(`${baseUrl}/api/hr/applications/203/attachments`, {
+    method: "POST",
+    headers: { "x-candidate-upload-token": expiredToken },
+    body: formData
+  });
+  const body = await response.json();
+  assert.equal(response.status, 403);
+  assert.match(body.error, /authorized user or valid candidate upload token/);
 
   await new Promise((resolve) => server.close(resolve));
   pool.execute = originalExecute;

@@ -12,6 +12,23 @@ import { upsertSearchDocument } from "./search-index-service.js";
 const allowedMimeTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
 const maxBytes = 20 * 1024 * 1024;
 const candidateUploadTokenTtlSeconds = 60 * 60 * 24;
+const candidateUploadTokenState = new Map();
+
+function pruneUploadTokenState(nowMs) {
+  for (const [jti, state] of candidateUploadTokenState) {
+    if (state.expiresAtMs <= nowMs || state.status === "used") {
+      candidateUploadTokenState.delete(jti);
+    }
+  }
+}
+
+function parseUploadToken(token) {
+  try {
+    return jwt.verify(token, config.jwtSecret);
+  } catch {
+    return null;
+  }
+}
 
 function normalizeDob(input) {
   if (input instanceof Date && !Number.isNaN(input.getTime())) {
@@ -167,10 +184,21 @@ export async function createCandidateApplication(input, actor) {
 }
 
 export function issueCandidateUploadToken(candidateId) {
+  const jti = uuidv4();
+  const nowMs = Date.now();
+  const expiresAtMs = nowMs + candidateUploadTokenTtlSeconds * 1000;
+  pruneUploadTokenState(nowMs);
+  candidateUploadTokenState.set(jti, {
+    candidateId: String(candidateId),
+    expiresAtMs,
+    status: "unused"
+  });
+
   return jwt.sign(
     {
       purpose: "CANDIDATE_ATTACHMENT",
-      candidateId: String(candidateId)
+      candidateId: String(candidateId),
+      jti
     },
     config.jwtSecret,
     { expiresIn: candidateUploadTokenTtlSeconds }
@@ -179,14 +207,59 @@ export function issueCandidateUploadToken(candidateId) {
 
 export function verifyCandidateUploadToken(token, candidateId) {
   if (!token) return false;
-  try {
-    const payload = jwt.verify(token, config.jwtSecret);
-    return (
-      payload.purpose === "CANDIDATE_ATTACHMENT" &&
-      String(payload.candidateId) === String(candidateId)
-    );
-  } catch {
+  const payload = parseUploadToken(token);
+  if (!payload) return false;
+  const nowMs = Date.now();
+  pruneUploadTokenState(nowMs);
+  const tokenState = candidateUploadTokenState.get(payload.jti);
+  if (!tokenState) return false;
+  if (tokenState.expiresAtMs <= nowMs) {
+    candidateUploadTokenState.delete(payload.jti);
     return false;
+  }
+  return (
+    payload.purpose === "CANDIDATE_ATTACHMENT" &&
+    String(payload.candidateId) === String(candidateId) &&
+    tokenState.status === "unused"
+  );
+}
+
+export function reserveCandidateUploadToken(token, candidateId) {
+  if (!token) return null;
+  const payload = parseUploadToken(token);
+  if (!payload) return null;
+  const nowMs = Date.now();
+  pruneUploadTokenState(nowMs);
+  const tokenState = candidateUploadTokenState.get(payload.jti);
+  if (!tokenState) return null;
+  if (
+    payload.purpose !== "CANDIDATE_ATTACHMENT" ||
+    String(payload.candidateId) !== String(candidateId) ||
+    tokenState.status !== "unused" ||
+    tokenState.expiresAtMs <= nowMs
+  ) {
+    return null;
+  }
+  tokenState.status = "reserved";
+  candidateUploadTokenState.set(payload.jti, tokenState);
+  return { jti: payload.jti, candidateId: String(candidateId) };
+}
+
+export function consumeReservedCandidateUploadToken(jti) {
+  if (!jti) return;
+  const tokenState = candidateUploadTokenState.get(jti);
+  if (!tokenState) return;
+  tokenState.status = "used";
+  candidateUploadTokenState.set(jti, tokenState);
+}
+
+export function releaseReservedCandidateUploadToken(jti) {
+  if (!jti) return;
+  const tokenState = candidateUploadTokenState.get(jti);
+  if (!tokenState) return;
+  if (tokenState.status === "reserved") {
+    tokenState.status = "unused";
+    candidateUploadTokenState.set(jti, tokenState);
   }
 }
 

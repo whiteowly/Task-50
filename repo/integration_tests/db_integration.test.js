@@ -8,7 +8,7 @@ import { pool } from "../backend/src/db.js";
 import { runDbPreflightChecks } from "./db_preflight.js";
 import { integrationPoolLifecycle } from "./pool-lifecycle.js";
 
-const dbIntegrationEnabled = process.env.RUN_DB_INTEGRATION_TESTS === "1";
+const dbIntegrationEnabled = process.env.RUN_DB_INTEGRATION_TESTS !== "0";
 const adminUsername = process.env.DB_INT_ADMIN_USER || "admin";
 const adminPassword = process.env.DB_INT_ADMIN_PASS || "AdminPassw0rd!";
 const clerkUsername = process.env.DB_INT_CLERK_USER || "clerk1";
@@ -41,7 +41,7 @@ async function login(baseUrl, username, password) {
 }
 
 if (!dbIntegrationEnabled) {
-  test("DB integration tests skipped without RUN_DB_INTEGRATION_TESTS=1", { skip: true }, () => {});
+  test("DB integration tests explicitly disabled via RUN_DB_INTEGRATION_TESTS=0", { skip: true }, () => {});
 } else {
   await runDbPreflightChecks({
     adminUsername,

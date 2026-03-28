@@ -3,6 +3,8 @@ import { apiFormRequest, apiRequest } from "../api.js";
 
 export function useReceivingWorkspace(auth) {
   const dockForm = ref({ siteId: auth.user?.siteId || "", poNumber: "", startAt: "", endAt: "", notes: "" });
+  const dockStatus = ref("");
+  const isSubmittingDock = ref(false);
   const receiptForm = ref({
     siteId: auth.user?.siteId || "",
     poNumber: "",
@@ -10,6 +12,7 @@ export function useReceivingWorkspace(auth) {
   });
   const receiptCloseForm = ref({ receiptId: "" });
   const receiptCloseStatus = ref("");
+  const receiptSubmitStatus = ref("");
   const isSubmittingReceipt = ref(false);
   const isClosingReceipt = ref(false);
   const receiptDocumentForm = ref({
@@ -28,11 +31,59 @@ export function useReceivingWorkspace(auth) {
   const isRunningPutaway = ref(false);
 
   async function submitDock() {
-    await apiRequest("/receiving/dock-appointments", { method: "POST", body: JSON.stringify(dockForm.value) });
+    if (isSubmittingDock.value) return;
+    dockStatus.value = "";
+    if (!dockForm.value.startAt || !dockForm.value.endAt) {
+      dockStatus.value = "Start and end time are required.";
+      return;
+    }
+
+    const start = new Date(dockForm.value.startAt);
+    const end = new Date(dockForm.value.endAt);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      dockStatus.value = "Start and end time must be valid.";
+      return;
+    }
+    const diffMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
+    if (diffMinutes !== 30) {
+      dockStatus.value = "Dock window must be exactly 30 minutes.";
+      return;
+    }
+
+    isSubmittingDock.value = true;
+    try {
+      await apiRequest("/receiving/dock-appointments", { method: "POST", body: JSON.stringify(dockForm.value) });
+      dockStatus.value = "Appointment saved.";
+    } catch (err) {
+      dockStatus.value = `Failed to save appointment: ${err.message}`;
+    } finally {
+      isSubmittingDock.value = false;
+    }
+  }
+
+  function validateReceiptDiscrepancies() {
+    const invalidLine = receiptForm.value.lines.find((line) => {
+      const hasDelta = Number(line.qtyReceived) !== Number(line.qtyExpected);
+      const hasDiscrepancyType = Boolean(line.discrepancyType);
+      const needsResolution = hasDelta || hasDiscrepancyType;
+      if (!needsResolution) return false;
+      const hasType = hasDiscrepancyType;
+      const hasDisposition = Boolean(String(line.dispositionNote || "").trim());
+      return !hasType || !hasDisposition;
+    });
+    if (!invalidLine) return "";
+    return "Discrepancy lines must include discrepancy type and resolution note before submitting.";
   }
 
   async function submitReceipt() {
     if (isSubmittingReceipt.value) return;
+    receiptSubmitStatus.value = "";
+    const discrepancyValidation = validateReceiptDiscrepancies();
+    if (discrepancyValidation) {
+      receiptSubmitStatus.value = discrepancyValidation;
+      return;
+    }
+
     isSubmittingReceipt.value = true;
     const payload = {
       ...receiptForm.value,
@@ -45,6 +96,9 @@ export function useReceivingWorkspace(auth) {
     };
     try {
       await apiRequest("/receiving/receipts", { method: "POST", body: JSON.stringify(payload) });
+      receiptSubmitStatus.value = "Receipt submitted.";
+    } catch (err) {
+      receiptSubmitStatus.value = `Failed to submit receipt: ${err.message}`;
     } finally {
       isSubmittingReceipt.value = false;
     }
@@ -131,9 +185,12 @@ export function useReceivingWorkspace(auth) {
 
   return {
     dockForm,
+    dockStatus,
+    isSubmittingDock,
     receiptForm,
     receiptCloseForm,
     receiptCloseStatus,
+    receiptSubmitStatus,
     isSubmittingReceipt,
     isClosingReceipt,
     receiptDocumentForm,

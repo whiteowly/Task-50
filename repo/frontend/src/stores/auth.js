@@ -1,15 +1,15 @@
 import { defineStore } from "pinia";
-import { apiRequest } from "../api.js";
+import { apiRequest, setSessionToken } from "../api.js";
 
 export const useAuthStore = defineStore("auth", {
   state: () => ({
-    token: localStorage.getItem("forgeops_token"),
+    token: null,
     user: null,
     loading: false,
     error: null
   }),
   getters: {
-    isAuthenticated: (state) => Boolean(state.token),
+    isAuthenticated: (state) => Boolean(state.user || state.token),
     role: (state) => state.user?.role || ""
   },
   actions: {
@@ -21,9 +21,9 @@ export const useAuthStore = defineStore("auth", {
           method: "POST",
           body: JSON.stringify({ username, password })
         });
-        this.token = payload.token;
+        this.token = payload.token || "session";
+        setSessionToken(payload.token || null);
         this.user = payload.user;
-        localStorage.setItem("forgeops_token", payload.token);
       } catch (err) {
         this.error = err.message;
         throw err;
@@ -32,9 +32,9 @@ export const useAuthStore = defineStore("auth", {
       }
     },
     async bootstrap() {
-      if (!this.token) return;
       try {
         const payload = await apiRequest("/auth/me");
+        this.token = this.token || "session";
         this.user = payload.user;
       } catch {
         this.logout();
@@ -42,15 +42,16 @@ export const useAuthStore = defineStore("auth", {
     },
     async logout() {
       try {
-        if (this.token) {
-          await apiRequest("/auth/logout", { method: "POST" });
-        }
+        await apiRequest("/auth/logout", { method: "POST" });
       } catch {
         // ignore network errors on logout
       }
       this.token = null;
+      setSessionToken(null);
       this.user = null;
-      localStorage.removeItem("forgeops_token");
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem("forgeops_token");
+      }
     }
   }
 });

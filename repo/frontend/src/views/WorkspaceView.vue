@@ -75,7 +75,10 @@ watch(
 
 const {
   dockForm,
+  dockStatus,
+  isSubmittingDock,
   receiptForm,
+  receiptSubmitStatus,
   isSubmittingReceipt,
   receiptCloseForm,
   receiptCloseStatus,
@@ -125,10 +128,12 @@ const {
   appFormFields,
   lastCandidateId,
   candidateUploadStatus,
+  candidateOutcome,
   scoreForm,
   interviewerReviewForm,
   interviewerReviewResult,
   interviewerReviewStatus,
+  isSubmittingCandidate,
   setApplicationFormFields,
   submitCandidate,
   getFormEntry,
@@ -187,12 +192,19 @@ async function logout() {
 
       <OverviewPanel v-if="displayedPanel === 'overview'" :widgets="dashboard.widgets" />
 
-      <DockPanel v-if="displayedPanel === 'dock'" :dock-form="dockForm" :on-submit-dock="submitDock" />
+      <DockPanel
+        v-if="displayedPanel === 'dock'"
+        :dock-form="dockForm"
+        :dock-status="dockStatus"
+        :is-submitting-dock="isSubmittingDock"
+        :on-submit-dock="submitDock"
+      />
 
       <ReceivingPanel
         v-if="displayedPanel === 'receiving'"
         :receipt-form="receiptForm"
         :on-submit-receipt="submitReceipt"
+        :receipt-submit-status="receiptSubmitStatus"
         :is-submitting-receipt="isSubmittingReceipt"
         :receipt-close-form="receiptCloseForm"
         :receipt-close-status="receiptCloseStatus"
@@ -259,6 +271,8 @@ async function logout() {
         :app-form-fields="appFormFields"
         :last-candidate-id="lastCandidateId"
         :candidate-upload-status="candidateUploadStatus"
+        :candidate-outcome="candidateOutcome"
+        :is-submitting-candidate="isSubmittingCandidate"
         :on-candidate-file-change="onCandidateFileChange"
         :on-submit-candidate="submitCandidate"
         :get-form-entry="getFormEntry"

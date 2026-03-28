@@ -5,7 +5,6 @@ import app from "../backend/src/app.js";
 import { runDbPreflightChecks } from "./db_preflight.js";
 import { integrationPoolLifecycle } from "./pool-lifecycle.js";
 
-const fullIntegrationEnabled = process.env.RUN_DB_INTEGRATION_TESTS === "1";
 const adminUsername = process.env.DB_INT_ADMIN_USER || "admin";
 const adminPassword = process.env.DB_INT_ADMIN_PASS || "AdminPassw0rd!";
 const clerkUsername = process.env.DB_INT_CLERK_USER || "clerk1";
@@ -36,22 +35,18 @@ async function login(baseUrl, username, password) {
   assert.equal(response.status, 200, `login failed for ${username}: ${body.error || "unknown"}`);
 }
 
-if (fullIntegrationEnabled) {
-  test("DB smoke preflight covered by RUN_DB_INTEGRATION_TESTS=1", { skip: true }, () => {});
-} else {
-  test("DB smoke preflight checks connectivity/schema/seeded-user logins", async () => {
-    await runDbPreflightChecks({
-      adminUsername,
-      clerkUsername,
-      verifyLogins: async () => {
-        const { server, baseUrl } = await startServer();
-        try {
-          await login(baseUrl, adminUsername, adminPassword);
-          await login(baseUrl, clerkUsername, clerkPassword);
-        } finally {
-          await new Promise((resolve) => server.close(resolve));
-        }
+test("DB smoke preflight checks connectivity/schema/seeded-user logins", async () => {
+  await runDbPreflightChecks({
+    adminUsername,
+    clerkUsername,
+    verifyLogins: async () => {
+      const { server, baseUrl } = await startServer();
+      try {
+        await login(baseUrl, adminUsername, adminPassword);
+        await login(baseUrl, clerkUsername, clerkPassword);
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
       }
-    });
+    }
   });
-}
+});

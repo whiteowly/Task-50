@@ -10,8 +10,11 @@ import { AppError } from "../utils/errors.js";
 import {
   attachCandidateFile,
   canActorAttachToCandidate,
+  consumeReservedCandidateUploadToken,
   createCandidateApplication,
   getCandidate,
+  releaseReservedCandidateUploadToken,
+  reserveCandidateUploadToken,
   verifyCandidateUploadToken
 } from "../services/hr-service.js";
 
@@ -37,17 +40,28 @@ router.post("/applications/:id/attachments", optionalAuth, async (ctx) => {
   const candidateId = ctx.params.id;
   const uploadToken = ctx.headers["x-candidate-upload-token"];
   const tokenAuthorized = verifyCandidateUploadToken(uploadToken, candidateId);
+  const reservedToken = tokenAuthorized ? reserveCandidateUploadToken(uploadToken, candidateId) : null;
   let actorAuthorized = false;
 
   if (actor) {
     actorAuthorized = await canActorAttachToCandidate(candidateId, actor);
   }
 
-  if (!tokenAuthorized && !actorAuthorized) {
+  if ((!tokenAuthorized || !reservedToken) && !actorAuthorized) {
     throw new AppError(403, "Attachment upload requires authorized user or valid candidate upload token");
   }
 
-  ctx.body = await attachCandidateFile(candidateId, file, actor || null);
+  try {
+    ctx.body = await attachCandidateFile(candidateId, file, actor || null);
+    if (reservedToken?.jti) {
+      consumeReservedCandidateUploadToken(reservedToken.jti);
+    }
+  } catch (err) {
+    if (reservedToken?.jti) {
+      releaseReservedCandidateUploadToken(reservedToken.jti);
+    }
+    throw err;
+  }
 });
 
 router.get(

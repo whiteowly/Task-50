@@ -50,3 +50,74 @@ test("receiving workspace requires inspection status in receipt payload", async 
   expect(payload.lines[0].inspectionStatus).toBe("PASS");
   expect(payload.lines[0].batchNo).toBe("B-100");
 });
+
+test("dock scheduling enforces exact 30-minute window", async () => {
+  const workspace = useReceivingWorkspace({ user: { siteId: 1 } });
+  workspace.dockForm.value.siteId = "1";
+  workspace.dockForm.value.poNumber = "PO-DOCK-1";
+  workspace.dockForm.value.startAt = "2026-04-10T09:00";
+  workspace.dockForm.value.endAt = "2026-04-10T09:20";
+
+  await workspace.submitDock();
+
+  expect(workspace.dockStatus.value).toBe("Dock window must be exactly 30 minutes.");
+  expect(apiRequestMock).not.toHaveBeenCalled();
+});
+
+test("dock submit ignores duplicate clicks while request in flight", async () => {
+  const workspace = useReceivingWorkspace({ user: { siteId: 1 } });
+  workspace.dockForm.value.siteId = "1";
+  workspace.dockForm.value.poNumber = "PO-DOCK-2";
+  workspace.dockForm.value.startAt = "2026-04-10T09:00";
+  workspace.dockForm.value.endAt = "2026-04-10T09:30";
+
+  let release;
+  apiRequestMock.mockImplementationOnce(() => new Promise((resolve) => {
+    release = resolve;
+  }));
+
+  const first = workspace.submitDock();
+  const second = workspace.submitDock();
+  expect(workspace.isSubmittingDock.value).toBe(true);
+  expect(apiRequestMock).toHaveBeenCalledTimes(1);
+  release({ ok: true });
+  await Promise.all([first, second]);
+  expect(workspace.isSubmittingDock.value).toBe(false);
+  expect(workspace.dockStatus.value).toBe("Appointment saved.");
+});
+
+test("receiving submission requires discrepancy resolution inputs", async () => {
+  const workspace = useReceivingWorkspace({ user: { siteId: 1 } });
+  workspace.receiptForm.value.lines[0].qtyExpected = 10;
+  workspace.receiptForm.value.lines[0].qtyReceived = 8;
+  workspace.receiptForm.value.lines[0].discrepancyType = "";
+  workspace.receiptForm.value.lines[0].dispositionNote = "";
+
+  await workspace.submitReceipt();
+
+  expect(workspace.receiptSubmitStatus.value).toContain("Discrepancy lines must include");
+  expect(apiRequestMock).not.toHaveBeenCalled();
+  expect(workspace.isSubmittingReceipt.value).toBe(false);
+});
+
+test("receipt submit ignores duplicate clicks while request in flight", async () => {
+  const workspace = useReceivingWorkspace({ user: { siteId: 1 } });
+  workspace.receiptForm.value.lines[0].qtyExpected = 10;
+  workspace.receiptForm.value.lines[0].qtyReceived = 10;
+  workspace.receiptForm.value.lines[0].discrepancyType = "";
+  workspace.receiptForm.value.lines[0].dispositionNote = "";
+
+  let release;
+  apiRequestMock.mockImplementationOnce(() => new Promise((resolve) => {
+    release = resolve;
+  }));
+
+  const first = workspace.submitReceipt();
+  const second = workspace.submitReceipt();
+  expect(workspace.isSubmittingReceipt.value).toBe(true);
+  expect(apiRequestMock).toHaveBeenCalledTimes(1);
+  release({ id: 300 });
+  await Promise.all([first, second]);
+  expect(workspace.isSubmittingReceipt.value).toBe(false);
+  expect(workspace.receiptSubmitStatus.value).toBe("Receipt submitted.");
+});

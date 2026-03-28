@@ -4,6 +4,7 @@ import { mount } from "@vue/test-utils";
 import router from "../src/router.js";
 import LoginView from "../src/views/LoginView.vue";
 import { useAuthStore } from "../src/stores/auth.js";
+import { setSessionToken } from "../src/api.js";
 
 beforeEach(async () => {
   setActivePinia(createPinia());
@@ -44,4 +45,29 @@ test("submits login and routes to workspace", async () => {
 
   expect(loginSpy).toHaveBeenCalledWith("admin", "LongPassword123");
   expect(pushSpy).toHaveBeenCalledWith("/");
+});
+
+test("logout clears in-memory auth and local storage artifacts", async () => {
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  const auth = useAuthStore();
+  const token = "legacy-token";
+  auth.token = token;
+  auth.user = { id: 1, username: "admin", role: "ADMIN" };
+  localStorage.setItem("forgeops_token", token);
+  setSessionToken(token);
+
+  await auth.logout();
+
+  expect(auth.token).toBe(null);
+  expect(auth.user).toBe(null);
+  expect(localStorage.getItem("forgeops_token")).toBe(null);
+});
+
+test("auth store does not hydrate token from localStorage by default", () => {
+  localStorage.setItem("forgeops_token", "persisted-token");
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  const auth = useAuthStore();
+  expect(auth.token).toBe(null);
 });

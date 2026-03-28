@@ -2,7 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { createCandidateApplication, attachCandidateFile } from "../backend/src/services/hr-service.js";
+import {
+  createCandidateApplication,
+  attachCandidateFile,
+  issueCandidateUploadToken,
+  verifyCandidateUploadToken,
+  reserveCandidateUploadToken,
+  consumeReservedCandidateUploadToken
+} from "../backend/src/services/hr-service.js";
 import { encryptString } from "../backend/src/utils/crypto.js";
 import { pool, withTx } from "../backend/src/db.js";
 
@@ -344,4 +351,18 @@ test("audit immutability runtime rejects UPDATE and DELETE attempts", async () =
   );
 
   pool.execute = originalExecute;
+});
+
+test("candidate upload token supports first use then blocks replay", () => {
+  const token = issueCandidateUploadToken("401");
+
+  const validBeforeUse = verifyCandidateUploadToken(token, "401");
+  assert.equal(validBeforeUse, true);
+
+  const reservation = reserveCandidateUploadToken(token, "401");
+  assert.ok(reservation?.jti);
+  consumeReservedCandidateUploadToken(reservation.jti);
+
+  const validAfterUse = verifyCandidateUploadToken(token, "401");
+  assert.equal(validAfterUse, false);
 });

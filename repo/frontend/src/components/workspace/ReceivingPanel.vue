@@ -8,6 +8,10 @@ defineProps({
     type: Function,
     required: true
   },
+  receiptSubmitStatus: {
+    type: String,
+    default: ""
+  },
   isSubmittingReceipt: {
     type: Boolean,
     default: false
@@ -83,6 +87,7 @@ defineProps({
     <button :disabled="isSubmittingReceipt" @click="onSubmitReceipt">
       {{ isSubmittingReceipt ? "Creating..." : "Create receipt" }}
     </button>
+    <p v-if="receiptSubmitStatus">{{ receiptSubmitStatus }}</p>
 
     <h3>Close receipt</h3>
     <input v-model="receiptCloseForm.receiptId" placeholder="Receipt ID" />

@@ -121,6 +121,13 @@ has the explicit `SENSITIVE_DATA_VIEW` permission.
   - `POST /api/notifications/offline-queue/retry` increments retries and tracks status transitions.
   - `GET /api/notifications` retrieves pending/delivered notification history (role-scoped).
 
+## Candidate Upload Token Security
+
+- Candidate upload tokens are now short-lived and single-use.
+- First successful attachment upload consumes the token server-side.
+- Replay attempts and expired tokens are rejected with 403 authorization errors.
+- Authorized staff users (`ADMIN`/`HR` and assigned `INTERVIEWER`) can still upload via role authorization without token.
+
 ## Receiving Receipt Documents
 
 - Use `POST /api/receiving/receipts/:id/documents` to upload receipt-linked documents.
@@ -162,6 +169,81 @@ npm.cmd run build
 npm.cmd run test
 ```
 
+### Frontend security and workflow regression suite
+
+High-value frontend integration-style tests (Vitest) cover:
+- sensitive candidate field rendering and masking in interviewer review
+- HR application outcome surfacing (duplicate/completeness/classification)
+- dock 30-minute window validation and receiving discrepancy resolution rules
+- session-safe auth behavior without default localStorage token persistence
+
+Run focused suite:
+
+```bash
+cd frontend
+npm run test -- tests/security-and-hr-flow.test.js tests/receiving-workspace.documents.test.js tests/login-view.interaction.test.js
+```
+
+Minimal E2E plan (next step):
+1. Add Playwright smoke flow for HR submit + attachment upload outcome rendering.
+2. Add Playwright flow for dock and receipt validation blocking behavior.
+3. Add Playwright auth/session flow asserting no persistent token restore after hard refresh.
+
+### Frontend test/build/E2E commands
+
+From `repo/frontend`:
+
+Linux/macOS:
+
+```bash
+npm run test
+npm run build
+npm run e2e:install
+npm run e2e
+```
+
+Windows CMD/PowerShell:
+
+```powershell
+npm.cmd run test
+npm.cmd run build
+npm.cmd run e2e:install
+npm.cmd run e2e
+```
+
+Optional headed E2E run:
+
+```bash
+npm run e2e:headed
+```
+
+Real backend-connected frontend E2E (non-mocked API):
+
+Prerequisites:
+1. Start backend API locally (`cd backend && npm run start`)
+2. Ensure DB schema/seed/users are applied:
+   - `backend/schema.sql`
+   - `backend/seed.sql`
+   - `node backend/scripts/seed-users.js`
+
+Run:
+
+```bash
+cd frontend
+npm run e2e:real
+```
+
+Windows PowerShell/CMD:
+
+```powershell
+cd frontend
+npm.cmd run e2e:real
+```
+
+Acceptance note:
+- `npm run e2e` now runs mocked smoke E2E first and then required real-backend E2E.
+- The real-backend segment is fail-fast and does not skip silently; it fails with actionable messages if backend/DB prerequisites are not ready.
+
 ### Cross-platform one-command runners
 
 Linux/macOS/Git Bash:
@@ -198,8 +280,8 @@ node --test --test-concurrency=1 integration_tests/db_smoke.test.js
 
 ### Full DB integration tests (opt-in)
 
-Integration tests only run when `RUN_DB_INTEGRATION_TESTS=1` is set.
-If unset, `integration_tests/db_integration.test.js` is skipped while smoke tests still run.
+Integration tests run by default when `RUN_DB_INTEGRATION_TESTS` is not set.
+Set `RUN_DB_INTEGRATION_TESTS=0` only to explicitly disable full DB integration coverage.
 
 Prerequisites (required before enabling DB integration tests):
 - Apply schema: `backend/schema.sql`
@@ -241,8 +323,8 @@ node --test --test-concurrency=1 integration_tests/*.test.js
 
 Expected outcomes:
 - Smoke run (`integration_tests/db_smoke.test.js`): passes when DB/setup are valid, otherwise fails with setup guidance.
-- Without `RUN_DB_INTEGRATION_TESTS=1`: full integration suite reports skipped tests.
-- With `RUN_DB_INTEGRATION_TESTS=1` and valid DB setup: full integration tests pass.
+- Default/with `RUN_DB_INTEGRATION_TESTS=1` and valid DB setup: full integration tests pass.
+- With `RUN_DB_INTEGRATION_TESTS=0`: DB integration file reports explicit skip message.
 
 Troubleshooting:
 - DB connection refused: verify `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME` and that MySQL is running.
