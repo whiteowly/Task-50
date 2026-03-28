@@ -1,8 +1,15 @@
 import { pool, withTx } from "../db.js";
 import { AppError, assert } from "../utils/errors.js";
 import { writeAudit } from "./audit-service.js";
+import { upsertSearchDocument } from "./search-index-service.js";
+import { config } from "../config.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { v4 as uuidv4 } from "uuid";
 
 const allowedDiscrepancies = ["OVER", "SHORT", "DAMAGED"];
+const allowedDocumentMimeTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
+const maxDocumentBytes = 20 * 1024 * 1024;
 
 export async function scheduleDockAppointment(input, actor) {
   assert(input.siteId, 400, "siteId required");
@@ -129,6 +136,16 @@ export async function createReceipt(input, actor) {
       conn
     });
 
+    await upsertSearchDocument({
+      entityType: "receipt",
+      entityId: header.insertId,
+      title: `Receipt ${header.insertId} for PO ${input.poNumber}`,
+      body: `Inbound receipt at site ${input.siteId}`,
+      tags: ["receipt", "inbound", input.poNumber],
+      source: "RECEIVING",
+      topic: "INBOUND"
+    }, conn);
+
     return { id: header.insertId };
   });
 }
@@ -202,6 +219,16 @@ export async function closeReceipt(receiptId, actor) {
     beforeValue: { status: "OPEN", site_id: receipt.site_id },
     afterValue: { status: "CLOSED", site_id: receipt.site_id }
   });
+
+  await upsertSearchDocument({
+    entityType: "receipt",
+    entityId: receiptId,
+    title: `Receipt ${receiptId} CLOSED`,
+    body: `Receipt closed for site ${receipt.site_id}`,
+    tags: ["receipt", "closed"],
+    source: "RECEIVING",
+    topic: "INBOUND"
+  });
 }
 
 export async function recommendPutaway({ sku, lotNo, quantity }) {
@@ -227,4 +254,98 @@ export async function recommendPutaway({ sku, lotNo, quantity }) {
     }
   }
   throw new AppError(409, "No valid location found for putaway");
+}
+
+async function getReceiptForActor(receiptId, actor) {
+  const [rows] = await pool.execute(
+    `SELECT id, site_id, po_number
+     FROM receipts
+     WHERE id = ?`,
+    [receiptId]
+  );
+  assert(rows.length, 404, "Receipt not found");
+  const receipt = rows[0];
+  if (actor.role === "CLERK") {
+    assert(Number(actor.siteId) === Number(receipt.site_id), 403, "Clerks can only manage documents for their site");
+  }
+  return receipt;
+}
+
+export async function uploadReceiptDocument(receiptId, payload, file, actor) {
+  const mimeType = file?.type || file?.mimetype || file?.mime || null;
+  const sourcePath = file?.path || file?.filepath || null;
+  const originalName = file?.name || file?.originalFilename || "receipt-document.bin";
+  assert(file, 400, "File required");
+  assert(sourcePath, 400, "Upload source path missing");
+  assert(allowedDocumentMimeTypes.has(mimeType), 400, "Only PDF/JPG/PNG allowed");
+  assert(file.size <= maxDocumentBytes, 400, "File exceeds 20 MB");
+
+  const receipt = await getReceiptForActor(receiptId, actor);
+
+  await fs.mkdir(config.uploadDir, { recursive: true });
+  const ext = path.extname(originalName).toLowerCase();
+  const docId = uuidv4();
+  const destPath = path.join(config.uploadDir, `${docId}${ext}`);
+  await fs.copyFile(sourcePath, destPath);
+
+  await pool.execute(
+    `INSERT INTO receipt_documents
+      (id, receipt_id, po_line_no, lot_no, storage_location_id, title,
+       original_name, stored_path, mime_type, size_bytes, uploaded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      docId,
+      receiptId,
+      payload?.poLineNo || null,
+      payload?.lotNo || null,
+      payload?.storageLocationId || null,
+      payload?.title || null,
+      originalName,
+      destPath,
+      mimeType,
+      file.size,
+      actor.id
+    ]
+  );
+
+  await writeAudit({
+    actorUserId: actor.id,
+    action: "CREATE",
+    entityType: "receipt_document",
+    entityId: docId,
+    beforeValue: null,
+    afterValue: {
+      receiptId: Number(receiptId),
+      poNumber: receipt.po_number,
+      poLineNo: payload?.poLineNo || null,
+      lotNo: payload?.lotNo || null,
+      storageLocationId: payload?.storageLocationId || null,
+      originalName
+    }
+  });
+
+  await upsertSearchDocument({
+    entityType: "receipt",
+    entityId: receiptId,
+    title: `Receipt ${receiptId} document uploaded`,
+    body: `Document ${originalName} uploaded for PO ${receipt.po_number}`,
+    tags: ["receipt", "document", payload?.poLineNo || "no-line", payload?.lotNo || "no-lot"],
+    source: "RECEIVING",
+    topic: "INBOUND"
+  });
+
+  return { id: docId };
+}
+
+export async function listReceiptDocuments(receiptId, actor) {
+  await getReceiptForActor(receiptId, actor);
+  const [rows] = await pool.execute(
+    `SELECT id, receipt_id, po_line_no, lot_no, storage_location_id, title,
+            original_name, mime_type, size_bytes, uploaded_by, created_at
+     FROM receipt_documents
+     WHERE receipt_id = ?
+     ORDER BY created_at DESC`,
+    [receiptId]
+  );
+  return rows;
 }

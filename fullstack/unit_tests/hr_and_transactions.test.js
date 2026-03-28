@@ -35,6 +35,9 @@ test("createCandidateApplication flags duplicate when name + dob + ssn4 match", 
       if (sql.includes("INSERT INTO candidate_form_answers")) {
         return [{ affectedRows: 1 }];
       }
+      if (sql.includes("INSERT INTO search_documents")) {
+        return [{ affectedRows: 1 }];
+      }
       if (sql.includes("FROM application_attachment_requirements")) {
         return [[{ classification: "RESUME" }]];
       }

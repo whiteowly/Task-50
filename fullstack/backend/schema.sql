@@ -81,6 +81,22 @@ CREATE TABLE IF NOT EXISTS receipt_lines (
   FOREIGN KEY (receipt_id) REFERENCES receipts(id)
 );
 
+CREATE TABLE IF NOT EXISTS receipt_documents (
+  id VARCHAR(36) PRIMARY KEY,
+  receipt_id BIGINT NOT NULL,
+  po_line_no VARCHAR(40) NULL,
+  lot_no VARCHAR(80) NULL,
+  storage_location_id BIGINT NULL,
+  title VARCHAR(255) NULL,
+  original_name VARCHAR(255) NOT NULL,
+  stored_path VARCHAR(500) NOT NULL,
+  mime_type VARCHAR(120) NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  uploaded_by BIGINT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (receipt_id) REFERENCES receipts(id)
+);
+
 CREATE TABLE IF NOT EXISTS receipt_discrepancies (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   receipt_id BIGINT NOT NULL,
@@ -282,6 +298,7 @@ CREATE TABLE IF NOT EXISTS search_documents (
   source VARCHAR(80) NULL,
   topic VARCHAR(80) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_search_entity (entity_type, entity_id),
   INDEX idx_search_meta (entity_type, source, topic, created_at)
 );
 

@@ -7,6 +7,7 @@ import { config } from "../config.js";
 import { decryptString, encryptString, maskSensitive } from "../utils/crypto.js";
 import { AppError, assert } from "../utils/errors.js";
 import { writeAudit } from "./audit-service.js";
+import { upsertSearchDocument } from "./search-index-service.js";
 
 const allowedMimeTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
 const maxBytes = 20 * 1024 * 1024;
@@ -108,6 +109,16 @@ export async function createCandidateApplication(input, actor) {
       afterValue: { attachmentCompleteness },
       conn
     });
+
+    await upsertSearchDocument({
+      entityType: "candidate",
+      entityId: appId,
+      title: input.fullName,
+      body: `Candidate application from ${input.source || "PORTAL"}`,
+      tags: ["candidate", "application", input.source || "PORTAL"],
+      source: input.source || "PORTAL",
+      topic: "APPLICANT"
+    }, conn);
 
     return {
       id: appId,
@@ -235,6 +246,16 @@ export async function attachCandidateFile(candidateId, file, actor) {
     candidateId,
     candidate.source || "PORTAL"
   );
+
+  await upsertSearchDocument({
+    entityType: "candidate",
+    entityId: candidateId,
+    title: `Candidate ${candidateId}`,
+    body: `Attachment ${originalName} uploaded`,
+    tags: ["candidate", "attachment", classifyAttachment(originalName)],
+    source: candidate.source || "PORTAL",
+    topic: "APPLICANT"
+  });
   await writeAudit({
     actorUserId: actor?.id || null,
     action: "UPDATE",

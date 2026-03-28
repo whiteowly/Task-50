@@ -11,6 +11,7 @@ INSERT INTO permissions (code, description) VALUES
   ('CANDIDATE_READ', 'Read candidate profiles'),
   ('NOTIFY_PUBLISH', 'Publish notifications'),
   ('MESSAGE_QUEUE', 'Manage offline message queue'),
+  ('AUDIT_READ', 'Read audit trail records'),
   ('RULES_WRITE', 'Manage scoring rules'),
   ('RULES_SCORE', 'Calculate qualification scores'),
   ('SENSITIVE_DATA_VIEW', 'View unmasked sensitive candidate fields')

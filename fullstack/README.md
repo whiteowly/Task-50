@@ -30,6 +30,11 @@ Offline-ready full-stack site for inbound receiving, production planning, and wo
 
 1. Create a MySQL database named `forgeops`.
 2. Apply `backend/schema.sql`, then `backend/seed.sql`.
+   - If upgrading an existing DB, apply schema updates for:
+     - `receipt_documents` table
+     - `search_documents` unique key `uq_search_entity`
+     - `notification_subscriptions.dnd_start` and `notification_subscriptions.dnd_end`
+     - `application_attachment_requirements` (if missing)
 3. Install backend deps:
 
 ```bash
@@ -85,6 +90,24 @@ has the explicit `SENSITIVE_DATA_VIEW` permission.
 - API flows:
   - `POST /api/notifications/offline-queue` creates queued connector export files.
   - `POST /api/notifications/offline-queue/retry` increments retries and tracks status transitions.
+  - `GET /api/notifications` retrieves pending/delivered notification history (role-scoped).
+
+## Receiving Receipt Documents
+
+- Use `POST /api/receiving/receipts/:id/documents` to upload receipt-linked documents.
+- File constraints: PDF/JPG/PNG, max 20MB.
+- Traceability fields supported: `poLineNo`, `lotNo`, `storageLocationId`, `title`.
+- Use `GET /api/receiving/receipts/:id/documents` to list receipt documents.
+
+## Search Index Lifecycle
+
+- The app writes/updates `search_documents` from core entity changes (candidates, receipts, work orders, notes/adjustments).
+- Archive-safe behavior: archived production plans are marked as archived in index entries.
+
+## Audit Trail View
+
+- `GET /api/audit` provides paginated audit trail retrieval for authorized users.
+- Sensitive values in `before/after` payloads are masked unless explicit sensitive permission is present.
 
 ## Test Commands
 

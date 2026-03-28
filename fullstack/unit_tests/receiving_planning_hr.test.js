@@ -138,6 +138,9 @@ test("approvePlanAdjustment applies after_snapshot updates and line upserts", as
       if (sql.includes("UPDATE plan_adjustments")) {
         return [{ affectedRows: 1 }];
       }
+      if (sql.includes("INSERT INTO search_documents")) {
+        return [{ affectedRows: 1 }];
+      }
       if (sql.includes("INSERT INTO audit_logs")) {
         return [{ insertId: 1 }];
       }
@@ -178,6 +181,9 @@ test("createCandidateApplication returns upload token", async () => {
         return [{ insertId: 88 }];
       }
       if (sql.includes("INSERT INTO candidate_form_answers")) {
+        return [{ affectedRows: 1 }];
+      }
+      if (sql.includes("INSERT INTO search_documents")) {
         return [{ affectedRows: 1 }];
       }
       if (sql.includes("FROM application_attachment_requirements")) {

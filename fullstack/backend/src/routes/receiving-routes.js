@@ -4,8 +4,10 @@ import { pool } from "../db.js";
 import {
   closeReceipt,
   createReceipt,
+  listReceiptDocuments,
   recommendPutaway,
-  scheduleDockAppointment
+  scheduleDockAppointment,
+  uploadReceiptDocument
 } from "../services/receiving-service.js";
 
 const router = new Router({ prefix: "/api/receiving" });
@@ -44,6 +46,25 @@ router.post(
   async (ctx) => {
     await closeReceipt(ctx.params.id, ctx.state.user);
     ctx.body = { ok: true };
+  }
+);
+
+router.get(
+  "/receipts/:id/documents",
+  requireAuth,
+  requirePermission("RECEIPT_WRITE"),
+  async (ctx) => {
+    ctx.body = await listReceiptDocuments(ctx.params.id, ctx.state.user);
+  }
+);
+
+router.post(
+  "/receipts/:id/documents",
+  requireAuth,
+  requirePermission("RECEIPT_WRITE"),
+  async (ctx) => {
+    const file = ctx.request.files?.file;
+    ctx.body = await uploadReceiptDocument(ctx.params.id, ctx.request.body, file, ctx.state.user);
   }
 );
 

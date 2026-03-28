@@ -134,6 +134,9 @@ test("POST /api/hr/applications creates candidate and returns upload token", asy
     if (sql.includes("INSERT INTO audit_logs")) {
       return [{ insertId: 1 }];
     }
+    if (sql.includes("INSERT INTO search_documents")) {
+      return [{ affectedRows: 1 }];
+    }
     if (sql.includes("FROM application_form_fields")) {
       return [[{ field_key: "work_eligibility" }]];
     }
@@ -153,6 +156,9 @@ test("POST /api/hr/applications creates candidate and returns upload token", asy
         return [{ insertId: 201 }];
       }
       if (sql.includes("INSERT INTO candidate_form_answers")) {
+        return [{ affectedRows: 1 }];
+      }
+      if (sql.includes("INSERT INTO search_documents")) {
         return [{ affectedRows: 1 }];
       }
       if (sql.includes("FROM application_attachment_requirements")) {
@@ -205,6 +211,7 @@ test("GET /api/hr/candidates/:id returns 404 for missing candidate", async () =>
 
   pool.execute = async (sql) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
     if (sql.includes("FROM sessions s")) {
       return [[{
         id: "sess-404",
@@ -302,6 +309,7 @@ test("POST /api/receiving/receipts/:id/close succeeds for same-site clerk", asyn
     if (sql.includes("FROM receipt_discrepancies")) return [[]];
     if (sql.includes("FROM receipt_lines rl")) return [[]];
     if (sql.includes("UPDATE receipts SET status = 'CLOSED'")) return [{ affectedRows: 1 }];
+    if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 
@@ -491,6 +499,214 @@ test("POST /api/notifications/offline-queue/retry processes retries and statuses
   assert.equal(response.status, 200);
   assert.equal(body.processed, 2);
   assert.deepEqual(retriedIds, ["msg-1", "msg-2"]);
+
+  await new Promise((resolve) => server.close(resolve));
+  pool.execute = originalExecute;
+});
+
+test("receipt document upload and list works for same-site clerk", async () => {
+  const token = jwt.sign({ sub: 40, sessionId: "sess-receipt-doc" }, config.jwtSecret, { expiresIn: 3600 });
+  let uploadedId = "doc-1";
+
+  pool.execute = async (sql, params) => {
+    if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-receipt-doc",
+        user_id: 40,
+        last_activity_at: new Date(),
+        username: "clerk1",
+        role: "CLERK",
+        site_id: 1,
+        department_id: 1,
+        sensitive_data_view: 0,
+        has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("FROM role_permissions rp")) return [[{ 1: 1 }]];
+    if (sql.includes("FROM receipts") && sql.includes("WHERE id = ?")) {
+      return [[{ id: 501, site_id: 1, po_number: "PO-501" }]];
+    }
+    if (sql.includes("INSERT INTO receipt_documents")) {
+      uploadedId = params[0];
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
+    if (sql.includes("FROM receipt_documents")) {
+      return [[{
+        id: uploadedId,
+        receipt_id: 501,
+        po_line_no: "10",
+        lot_no: "L1",
+        storage_location_id: 9,
+        title: "BOL",
+        original_name: "doc.png",
+        mime_type: "image/png",
+        size_bytes: 512,
+        uploaded_by: 40,
+        created_at: new Date()
+      }]];
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const { server, baseUrl } = await startServer();
+  const formData = new FormData();
+  formData.append("file", new File(["x"], "doc.png", { type: "image/png" }));
+  formData.append("poLineNo", "10");
+  formData.append("lotNo", "L1");
+  formData.append("storageLocationId", "9");
+  formData.append("title", "BOL");
+
+  const uploadRes = await fetch(`${baseUrl}/api/receiving/receipts/501/documents`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: formData
+  });
+  const uploadBody = await uploadRes.json();
+  assert.equal(uploadRes.status, 200);
+  assert.ok(uploadBody.id);
+
+  const listRes = await fetch(`${baseUrl}/api/receiving/receipts/501/documents`, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  const listBody = await listRes.json();
+  assert.equal(listRes.status, 200);
+  assert.equal(Array.isArray(listBody), true);
+  assert.equal(listBody.length, 1);
+
+  await new Promise((resolve) => server.close(resolve));
+  pool.execute = originalExecute;
+});
+
+test("GET /api/notifications returns user-scoped notification inbox", async () => {
+  const token = jwt.sign({ sub: 41, sessionId: "sess-notif-list" }, config.jwtSecret, { expiresIn: 3600 });
+  let scopedByUser = false;
+
+  pool.execute = async (sql, params) => {
+    if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-notif-list",
+        user_id: 41,
+        last_activity_at: new Date(),
+        username: "hr1",
+        role: "HR",
+        site_id: 1,
+        department_id: 1,
+        sensitive_data_view: 0,
+        has_sensitive_permission: 1
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("FROM notifications") && sql.includes("LIMIT")) {
+      scopedByUser = params.includes(41);
+      return [[{ id: 1, user_id: 41, event_type: "RECEIPT_ACK", message: "x", status: "DELIVERED", deliver_after: null, delivered_at: new Date(), created_at: new Date() }]];
+    }
+    if (sql.includes("SELECT COUNT(*) AS total") && sql.includes("FROM notifications")) {
+      return [[{ total: 1 }]];
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const { server, baseUrl } = await startServer();
+  const response = await fetch(`${baseUrl}/api/notifications?page=1&pageSize=20`, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.total, 1);
+  assert.equal(body.data.length, 1);
+  assert.equal(scopedByUser, true);
+
+  await new Promise((resolve) => server.close(resolve));
+  pool.execute = originalExecute;
+});
+
+test("GET /api/audit is denied for user without AUDIT_READ", async () => {
+  const token = jwt.sign({ sub: 42, sessionId: "sess-audit-deny" }, config.jwtSecret, { expiresIn: 3600 });
+
+  pool.execute = async (sql) => {
+    if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-audit-deny",
+        user_id: 42,
+        last_activity_at: new Date(),
+        username: "hr-no-audit",
+        role: "HR",
+        site_id: 1,
+        department_id: 1,
+        sensitive_data_view: 0,
+        has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("FROM role_permissions rp")) return [[]];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const { server, baseUrl } = await startServer();
+  const response = await fetch(`${baseUrl}/api/audit`, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  assert.equal(response.status, 403);
+
+  await new Promise((resolve) => server.close(resolve));
+  pool.execute = originalExecute;
+});
+
+test("GET /api/audit returns masked audit shape when sensitive permission absent", async () => {
+  const token = jwt.sign({ sub: 43, sessionId: "sess-audit-admin" }, config.jwtSecret, { expiresIn: 3600 });
+
+  pool.execute = async (sql, params) => {
+    if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-audit-admin",
+        user_id: 43,
+        last_activity_at: new Date(),
+        username: "admin",
+        role: "ADMIN",
+        site_id: 1,
+        department_id: 1,
+        sensitive_data_view: 0,
+        has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("FROM audit_logs") && sql.includes("LIMIT")) {
+      return [[{
+        id: 1,
+        actor_user_id: 99,
+        action: "UPDATE",
+        entity_type: "candidate",
+        entity_id: "5",
+        before_value: { dob: "1990-01-01", ssnLast4: "1234" },
+        after_value: { dob: "1991-01-01", ssnLast4: "4321" },
+        created_at: new Date()
+      }]];
+    }
+    if (sql.includes("SELECT COUNT(*) AS total") && sql.includes("FROM audit_logs")) {
+      return [[{ total: 1 }]];
+    }
+    if (sql.includes("FROM role_permissions rp")) {
+      return [[{ 1: 1 }]];
+    }
+    throw new Error(`Unexpected SQL: ${sql} params=${JSON.stringify(params)}`);
+  };
+
+  const { server, baseUrl } = await startServer();
+  const response = await fetch(`${baseUrl}/api/audit?page=1&pageSize=20`, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.total, 1);
+  assert.equal(body.data.length, 1);
+  assert.equal(body.data[0].beforeValue.dob, "[MASKED]");
+  assert.equal(body.data[0].afterValue.ssnLast4, "[MASKED]");
 
   await new Promise((resolve) => server.close(resolve));
   pool.execute = originalExecute;

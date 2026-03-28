@@ -282,3 +282,50 @@ export async function retryFailedMessages(actor = null) {
   }
   return { processed: rows.length };
 }
+
+export async function listNotifications(actor, query) {
+  const page = Math.max(1, Number(query.page || 1));
+  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize || 20)));
+  const offset = (page - 1) * pageSize;
+
+  const where = [];
+  const params = [];
+  if (actor.role !== "ADMIN") {
+    where.push("user_id = ?");
+    params.push(actor.id);
+  } else if (query.userId) {
+    where.push("user_id = ?");
+    params.push(query.userId);
+  }
+  if (query.status) {
+    where.push("status = ?");
+    params.push(query.status);
+  }
+  if (query.eventType) {
+    where.push("event_type = ?");
+    params.push(query.eventType);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const [rows] = await pool.execute(
+    `SELECT id, user_id, event_type, message, status, deliver_after, delivered_at, created_at
+     FROM notifications
+     ${whereSql}
+     ORDER BY created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, pageSize, offset]
+  );
+  const [[countRow]] = await pool.execute(
+    `SELECT COUNT(*) AS total
+     FROM notifications
+     ${whereSql}`,
+    params
+  );
+
+  return {
+    page,
+    pageSize,
+    total: Number(countRow.total),
+    data: rows
+  };
+}

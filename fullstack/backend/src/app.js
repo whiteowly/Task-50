@@ -10,6 +10,7 @@ import hrRoutes from "./routes/hr-routes.js";
 import notificationRoutes from "./routes/notification-routes.js";
 import searchRoutes from "./routes/search-routes.js";
 import rulesRoutes from "./routes/rules-routes.js";
+import auditRoutes from "./routes/audit-routes.js";
 import { requireAuth } from "./middleware/auth.js";
 import { pool } from "./db.js";
 
@@ -83,5 +84,7 @@ app.use(searchRoutes.routes());
 app.use(searchRoutes.allowedMethods());
 app.use(rulesRoutes.routes());
 app.use(rulesRoutes.allowedMethods());
+app.use(auditRoutes.routes());
+app.use(auditRoutes.allowedMethods());
 
 export default app;

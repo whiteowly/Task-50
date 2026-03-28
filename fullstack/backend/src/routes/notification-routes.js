@@ -1,6 +1,7 @@
 import Router from "koa-router";
 import { requireAuth, requirePermission } from "../middleware/auth.js";
 import {
+  listNotifications,
   processPendingNotifications,
   publishEvent,
   queueOfflineMessage,
@@ -12,6 +13,10 @@ const router = new Router({ prefix: "/api/notifications" });
 
 router.post("/subscriptions", requireAuth, async (ctx) => {
   ctx.body = await subscribeNotification(ctx.request.body, ctx.state.user);
+});
+
+router.get("/", requireAuth, async (ctx) => {
+  ctx.body = await listNotifications(ctx.state.user, ctx.query);
 });
 
 router.post("/events", requireAuth, requirePermission("NOTIFY_PUBLISH"), async (ctx) => {

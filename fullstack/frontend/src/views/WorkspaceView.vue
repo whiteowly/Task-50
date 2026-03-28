@@ -57,8 +57,14 @@ const lastCandidateId = ref("");
 const candidateUploadStatus = ref("");
 const scoreForm = ref({ candidateId: "", ruleVersionId: "", courseworkScores: [0], midtermScores: [0], finalScores: [0], creditHours: 3 });
 const notifForm = ref({ topic: "RECEIPT_ACK", frequency: "IMMEDIATE", dndStart: "21:00", dndEnd: "07:00" });
+const notificationQuery = ref({ status: "", eventType: "", page: 1, pageSize: 20 });
+const notificationPage = ref({ page: 1, pageSize: 20, total: 0, data: [] });
+const notificationStatus = ref("");
 const searchForm = ref({ q: "", source: "", topic: "", entityType: "", startDate: "", endDate: "" });
 const searchResults = ref([]);
+const auditQuery = ref({ action: "", entityType: "", actorUserId: "", page: 1, pageSize: 20 });
+const auditPage = ref({ page: 1, pageSize: 20, total: 0, data: [] });
+const auditStatus = ref("");
 const interviewerReviewForm = ref({ candidateId: "" });
 const interviewerReviewResult = ref(null);
 const interviewerReviewStatus = ref("");
@@ -215,6 +221,28 @@ async function subscribeNotifications() {
   await apiRequest("/notifications/subscriptions", { method: "POST", body: JSON.stringify(notifForm.value) });
 }
 
+async function loadNotifications() {
+  notificationStatus.value = "";
+  try {
+    const params = new URLSearchParams(notificationQuery.value).toString();
+    notificationPage.value = await apiRequest(`/notifications?${params}`);
+    notificationStatus.value = "Notifications loaded.";
+  } catch (err) {
+    notificationStatus.value = `Failed to load notifications: ${err.message}`;
+  }
+}
+
+async function loadAuditLogs() {
+  auditStatus.value = "";
+  try {
+    const params = new URLSearchParams(auditQuery.value).toString();
+    auditPage.value = await apiRequest(`/audit?${params}`);
+    auditStatus.value = "Audit logs loaded.";
+  } catch (err) {
+    auditStatus.value = `Failed to load audit logs: ${err.message}`;
+  }
+}
+
 async function computeScore() {
   await apiRequest("/rules/score", { method: "POST", body: JSON.stringify(scoreForm.value) });
 }
@@ -338,6 +366,10 @@ async function logout() {
         v-if="activePanel === 'notifications'"
         :notif-form="notifForm"
         :on-subscribe-notifications="subscribeNotifications"
+        :notification-query="notificationQuery"
+        :notification-page="notificationPage"
+        :notification-status="notificationStatus"
+        :on-load-notifications="loadNotifications"
       />
 
       <SearchPanel
@@ -347,7 +379,13 @@ async function logout() {
         :on-search-all="searchAll"
       />
 
-      <AuditPanel v-if="activePanel === 'audit'" />
+      <AuditPanel
+        v-if="activePanel === 'audit'"
+        :audit-query="auditQuery"
+        :audit-page="auditPage"
+        :audit-status="auditStatus"
+        :on-load-audit="loadAuditLogs"
+      />
     </section>
   </main>
 </template>

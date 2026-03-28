@@ -1,6 +1,7 @@
 import { pool, withTx } from "../db.js";
 import { AppError, assert } from "../utils/errors.js";
 import { writeAudit } from "./audit-service.js";
+import { archiveSearchDocument, upsertSearchDocument } from "./search-index-service.js";
 
 function canCrossSite(actor) {
   return actor.role === "ADMIN";
@@ -85,6 +86,16 @@ export async function upsertMpsPlan(input, actor) {
     beforeValue,
     afterValue: input
   });
+
+  await upsertSearchDocument({
+    entityType: "production_plan",
+    entityId: planId,
+    title: input.planName || `Plan ${planId}`,
+    body: `12-week MPS starting ${input.startWeek}`,
+    tags: ["mps", "production", `site-${input.siteId}`],
+    source: "PLANNING",
+    topic: "MPS"
+  });
   return { id: planId };
 }
 
@@ -141,6 +152,16 @@ export async function createWorkOrder(input, actor) {
     beforeValue: null,
     afterValue: input
   });
+
+  await upsertSearchDocument({
+    entityType: "work_order",
+    entityId: result.insertId,
+    title: `Work Order ${result.insertId}`,
+    body: `Item ${input.itemCode}, target ${input.qtyTarget}`,
+    tags: ["workorder", input.itemCode],
+    source: "PLANNING",
+    topic: "WORK_ORDER"
+  });
   return { id: result.insertId };
 }
 
@@ -164,6 +185,16 @@ export async function logWorkOrderEvent(workOrderId, input, actor) {
     beforeValue: null,
     afterValue: input
   });
+
+  await upsertSearchDocument({
+    entityType: "note",
+    entityId: `${workOrderId}-${Date.now()}`,
+    title: `Work order event ${input.eventType}`,
+    body: input.notes || "Work order event logged",
+    tags: ["workorder", "event", input.eventType, input.reasonCode || ""],
+    source: "PLANNING",
+    topic: "WORK_ORDER_EVENT"
+  });
 }
 
 export async function requestPlanAdjustment(planId, input, actor) {
@@ -182,6 +213,16 @@ export async function requestPlanAdjustment(planId, input, actor) {
     entityId: result.insertId,
     beforeValue: input.before,
     afterValue: input.after
+  });
+
+  await upsertSearchDocument({
+    entityType: "plan_adjustment",
+    entityId: result.insertId,
+    title: `Plan Adjustment ${result.insertId}`,
+    body: `Reason ${input.reasonCode}`,
+    tags: ["plan", "adjustment", input.reasonCode],
+    source: "PLANNING",
+    topic: "ADJUSTMENT"
   });
   return { id: result.insertId };
 }
@@ -294,6 +335,21 @@ export async function approvePlanAdjustment(adjustmentId, actor) {
       afterValue: planAfterRows[0],
       conn
     });
+
+    if (planAfterRows[0]?.status === "ARCHIVED") {
+      await archiveSearchDocument("production_plan", adj.plan_id, conn);
+    } else {
+      await upsertSearchDocument({
+        entityType: "production_plan",
+        entityId: adj.plan_id,
+        title: planAfterRows[0].plan_name,
+        body: `Plan status ${planAfterRows[0].status}`,
+        tags: ["mps", "production", `site-${planAfterRows[0].site_id}`],
+        source: "PLANNING",
+        topic: "MPS"
+      }, conn);
+    }
+
     return { ok: true };
   });
 }

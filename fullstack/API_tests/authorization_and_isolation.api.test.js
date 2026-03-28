@@ -20,6 +20,7 @@ test("planning API denies planner creating MPS for another site", async () => {
   const token = jwt.sign({ sub: 1, sessionId: "sess-plan-1" }, config.jwtSecret, { expiresIn: 3600 });
   pool.execute = async (sql) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
     if (sql.includes("FROM sessions s")) {
       return [[{
         id: "sess-plan-1",
@@ -54,6 +55,7 @@ test("planning API allows planner creating MPS for same site", async () => {
   const token = jwt.sign({ sub: 1, sessionId: "sess-plan-2" }, config.jwtSecret, { expiresIn: 3600 });
   pool.execute = async (sql) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
     if (sql.includes("FROM sessions s")) {
       return [[{
         id: "sess-plan-2",
@@ -156,6 +158,7 @@ test("candidate attachment upload succeeds with candidate upload token", async (
 
   pool.execute = async (sql) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
     if (sql.includes("SELECT id, source FROM candidates WHERE id = ?")) return [[{ id: 201, source: "PORTAL" }]];
     if (sql.includes("INSERT INTO candidate_attachments")) return [{ affectedRows: 1 }];
     if (sql.includes("FROM application_attachment_requirements")) return [[{ classification: "RESUME" }]];
