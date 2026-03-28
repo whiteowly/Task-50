@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createWorkOrder, logWorkOrderEvent, runMrp } from "../backend/src/services/planning-service.js";
+import { createWorkOrder, logWorkOrderEvent, runMrp, upsertMpsPlan } from "../backend/src/services/planning-service.js";
 import { searchHub } from "../backend/src/services/search-service.js";
 import { publishEvent, queueOfflineMessage, subscribeNotification } from "../backend/src/services/notification-service.js";
 import { optionalAuth } from "../backend/src/middleware/auth.js";
@@ -141,6 +141,85 @@ test("planning logWorkOrderEvent rejects downtime without reason code", async ()
   );
 
   pool.execute = originalExecute;
+});
+
+test("planning runMrp stock isolation: ignores inventory from other sites", async () => {
+  const targetSiteId = 1;
+  const otherSiteId = 2;
+  const componentSku = "COMP-100";
+
+  pool.execute = async (sql, params) => {
+    // 1. Get Plan
+    if (sql.includes("FROM production_plans") && sql.includes("WHERE id = ?")) {
+      return [[{ id: 101, site_id: targetSiteId, plan_name: "Site A Plan", start_week: "2026-04-06", status: "DRAFT" }]];
+    }
+    // 2. Get Plan Lines
+    if (sql.includes("FROM production_plan_lines")) {
+      return [[{ item_code: "FINISHED-GOOD", total_qty: 10 }]];
+    }
+    // 3. Get BOM
+    if (sql.includes("FROM bill_of_materials")) {
+      return [[{ component_code: componentSku, qty_per: 1 }]];
+    }
+    // 4. Get Inventory - Assert site_id is correctly scoped
+    if (sql.includes("FROM inventory_locations")) {
+      assert.strictEqual(params[0], componentSku);
+      assert.strictEqual(params[1], targetSiteId, "MRP must only query inventory for the plan's site");
+      
+      // Simulate that if it queried all sites, it would find more, 
+      // but since it's scoped it only returns the target site's stock.
+      return [[{ on_hand: 50 }]]; 
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const result = await runMrp(101, { id: 1, role: "PLANNER", siteId: targetSiteId });
+  
+  // Verify result only reflects the 50 units from site 1, 
+  // explicitly ignoring any (theoretical) stock in site 2.
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(result[0].componentCode, componentSku);
+  assert.strictEqual(result[0].onHandQty, 50);
+
+  pool.execute = originalExecute;
+});
+
+test("planning upsertMpsPlan rejects 11-week and 13-week payloads", async () => {
+  const actor = { id: 1, role: "PLANNER", siteId: 1 };
+  const baseInput = {
+    siteId: 1,
+    planName: "Test Plan",
+    startWeek: "2026-04-06",
+    weeks: []
+  };
+
+  // 11 weeks (Too few)
+  const input11 = {
+    ...baseInput,
+    weeks: Array.from({ length: 11 }, (_, i) => ({
+      weekIndex: i,
+      itemCode: "SKU-1",
+      plannedQty: 100
+    }))
+  };
+  await assert.rejects(
+    () => upsertMpsPlan(input11, actor),
+    /Exactly 12 weeks required/
+  );
+
+  // 13 weeks (Too many)
+  const input13 = {
+    ...baseInput,
+    weeks: Array.from({ length: 13 }, (_, i) => ({
+      weekIndex: i,
+      itemCode: "SKU-1",
+      plannedQty: 100
+    }))
+  };
+  await assert.rejects(
+    () => upsertMpsPlan(input13, actor),
+    /Exactly 12 weeks required/
+  );
 });
 
 test("searchHub applies site scope for clerk", async () => {

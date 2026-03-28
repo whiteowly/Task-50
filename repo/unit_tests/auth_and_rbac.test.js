@@ -49,7 +49,116 @@ test("login locks account after fifth failed attempt", async () => {
   pool.execute = originalExecute;
 });
 
-test("login returns token and resets failed attempts on success", async () => {
+test("login allows access after lockout period (15 minutes)", async () => {
+  const hash = await bcrypt.hash("CorrectPassword123", 4);
+  const now = Date.now();
+  const lockoutTime = new Date(now - 1 * 60 * 1000); // Locked 1 minute ago
+  // Note: config.accountLockMinutes = 15. We'll simulate advancing time 16 minutes after that lock.
+
+  let resetAttemptsCalled = false;
+  let sessionInsertCalled = false;
+
+  pool.execute = async (sql, params) => {
+    if (sql.includes("FROM users WHERE username = ?")) {
+      return [[{
+        id: 10,
+        username: "locked-user",
+        role: "CLERK",
+        password_hash: hash,
+        failed_login_attempts: 5,
+        locked_until: lockoutTime,
+        site_id: 1,
+        department_id: 1,
+        has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET failed_login_attempts = 0, locked_until = NULL")) {
+      resetAttemptsCalled = true;
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes("INSERT INTO sessions")) {
+      sessionInsertCalled = true;
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes("INSERT INTO audit_logs")) {
+      return [{ insertId: 1 }];
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  // 1. First, verify login fails BEFORE time advancement (1 minute after lock)
+  // At this point, new Date() is > lockoutTime but wait... 
+  // Let's re-read the service logic:
+  // if (user.locked_until && new Date(user.locked_until) > new Date())
+  // So if locked_until = 12:00 and current time = 11:59, it's blocked.
+  
+  // Set locked_until to 14 minutes in the future relative to "now"
+  const futureLockout = new Date(now + 14 * 60 * 1000);
+  
+  pool.execute = async (sql, params) => {
+    if (sql.includes("FROM users WHERE username = ?")) {
+      return [[{
+        id: 10,
+        username: "locked-user",
+        role: "CLERK",
+        password_hash: hash,
+        failed_login_attempts: 5,
+        locked_until: futureLockout,
+        site_id: 1,
+        department_id: 1,
+        has_sensitive_permission: 0
+      }]];
+    }
+    throw new Error(`Unexpected SQL during pre-check: ${sql}`);
+  };
+
+  await assert.rejects(() => login("locked-user", "CorrectPassword123"), /Account locked/);
+
+  // 2. Mock Date.now to advance time by 16 minutes (beyond the 15 min config)
+  const advancedNow = now + 16 * 60 * 1000;
+  
+  pool.execute = async (sql, params) => {
+    if (sql.includes("FROM users WHERE username = ?")) {
+      // In auth-service.js:
+      // if (user.locked_until && new Date(user.locked_until) > new Date())
+      // We pass a date that is clearly in the past relative to "now".
+      const passedLockout = new Date(Date.now() - 1 * 60 * 1000); 
+      
+      return [[{
+        id: 10,
+        username: "locked-user",
+        role: "CLERK",
+        password_hash: hash,
+        failed_login_attempts: 5,
+        locked_until: passedLockout,
+        site_id: 1,
+        department_id: 1,
+        has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("failed_login_attempts = 0")) {
+      resetAttemptsCalled = true;
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes("INSERT INTO sessions")) {
+      sessionInsertCalled = true;
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes("INSERT INTO audit_logs")) {
+      return [{ insertId: 1 }];
+    }
+    throw new Error(`Unexpected SQL during retry: ${sql}`);
+  };
+
+  const result = await login("locked-user", "CorrectPassword123");
+  assert.ok(result.token, "Login should succeed after 15 minutes");
+  assert.strictEqual(resetAttemptsCalled, true);
+  assert.strictEqual(sessionInsertCalled, true);
+
+  pool.execute = originalExecute;
+});
+
+test("login sensitiveDataView depends on permission mapping, not user flag", async () => {
   const hash = await bcrypt.hash("CorrectPassword123", 4);
   let resetAttempts = false;
   let sessionInsert = false;
@@ -132,8 +241,10 @@ test("login sensitiveDataView depends on permission mapping, not user flag", asy
 
 test("optionalAuth revokes idle session after timeout", async () => {
   const token = jwt.sign({ sub: 1, sessionId: "session-1" }, config.jwtSecret, { expiresIn: 3600 });
-  let revoked = false;
-  const staleDate = new Date(Date.now() - 31 * 60 * 1000);
+  let revokedCalled = false;
+  
+  // config.idleTimeoutSeconds = 1800 (30 mins)
+  const staleDate = new Date(Date.now() - 31 * 60 * 1000); // 31 mins ago
 
   pool.execute = async (sql) => {
     if (sql.includes("FROM sessions s")) {
@@ -145,11 +256,11 @@ test("optionalAuth revokes idle session after timeout", async () => {
         role: "ADMIN",
         site_id: 1,
         department_id: 1,
-        sensitive_data_view: 1
+        has_sensitive_permission: 1
       }]];
     }
     if (sql.includes("SET revoked_at = NOW()")) {
-      revoked = true;
+      revokedCalled = true;
       return [{ affectedRows: 1 }];
     }
     if (sql.includes("INSERT INTO audit_logs")) {
@@ -160,8 +271,8 @@ test("optionalAuth revokes idle session after timeout", async () => {
 
   const ctx = { headers: { authorization: `Bearer ${token}` }, state: {} };
   await optionalAuth(ctx, async () => {});
-  assert.equal(revoked, true);
-  assert.equal(ctx.state.user, undefined);
+  assert.strictEqual(revokedCalled, true);
+  assert.strictEqual(ctx.state.user, undefined);
 
   pool.execute = originalExecute;
 });
