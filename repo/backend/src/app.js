@@ -63,8 +63,7 @@ router.get("/api/dashboard", requireAuth, async (ctx) => {
     ctx.body = { role, widgets: { activeWorkOrders: openOrders.count, candidates: candidateCount.count } };
     return;
   }
-  const [[candidateCount]] = await pool.execute("SELECT COUNT(*) AS count FROM candidates");
-  ctx.body = { role, widgets: { candidates: candidateCount.count } };
+  ctx.body = { role, widgets: { candidates: null } };
 });
 
 app.use(router.routes());

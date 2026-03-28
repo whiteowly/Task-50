@@ -1082,6 +1082,85 @@ test("GET /api/dashboard scopes planner widgets to own site", async () => {
   pool.execute = originalExecute;
 });
 
+test("GET /api/dashboard redacts global candidate aggregate for restricted roles", async () => {
+  const token = jwt.sign({ sub: 34, sessionId: "sess-dashboard-interviewer" }, config.jwtSecret, { expiresIn: 3600 });
+  let candidateQueryCalled = false;
+
+  pool.execute = async (sql) => {
+    if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-dashboard-interviewer",
+        user_id: 34,
+        last_activity_at: new Date(),
+        username: "interviewer1",
+        role: "INTERVIEWER",
+        site_id: 2,
+        department_id: 1,
+        sensitive_data_view: 0,
+        has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("SELECT COUNT(*) AS count FROM candidates")) {
+      candidateQueryCalled = true;
+      return [[{ count: 999 }]];
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const { server, baseUrl } = await startServer();
+  const response = await fetch(`${baseUrl}/api/dashboard`, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.role, "INTERVIEWER");
+  assert.equal(body.widgets.candidates, null);
+  assert.equal(candidateQueryCalled, false);
+
+  await new Promise((resolve) => server.close(resolve));
+  pool.execute = originalExecute;
+});
+
+test("GET /api/dashboard returns global candidate aggregate for admin", async () => {
+  const token = jwt.sign({ sub: 35, sessionId: "sess-dashboard-admin" }, config.jwtSecret, { expiresIn: 3600 });
+
+  pool.execute = async (sql) => {
+    if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-dashboard-admin",
+        user_id: 35,
+        last_activity_at: new Date(),
+        username: "admin",
+        role: "ADMIN",
+        site_id: 1,
+        department_id: 1,
+        sensitive_data_view: 1,
+        has_sensitive_permission: 1
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("SELECT COUNT(*) AS count FROM work_orders")) return [[{ count: 8 }]];
+    if (sql.includes("SELECT COUNT(*) AS count FROM candidates")) return [[{ count: 21 }]];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const { server, baseUrl } = await startServer();
+  const response = await fetch(`${baseUrl}/api/dashboard`, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.role, "ADMIN");
+  assert.equal(body.widgets.activeWorkOrders, 8);
+  assert.equal(body.widgets.candidates, 21);
+
+  await new Promise((resolve) => server.close(resolve));
+  pool.execute = originalExecute;
+});
+
 test("GET /api/dashboard returns generic error body for internal failures", async () => {
   const token = jwt.sign({ sub: 31, sessionId: "sess-dashboard-error" }, config.jwtSecret, { expiresIn: 3600 });
 

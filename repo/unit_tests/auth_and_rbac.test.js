@@ -158,7 +158,7 @@ test("login allows access after lockout period (15 minutes)", async () => {
   pool.execute = originalExecute;
 });
 
-test("login sensitiveDataView depends on permission mapping, not user flag", async () => {
+test("login returns token and resets failed attempts on success", async () => {
   const hash = await bcrypt.hash("CorrectPassword123", 4);
   let resetAttempts = false;
   let sessionInsert = false;
