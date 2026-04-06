@@ -20,11 +20,24 @@ RUN_DB_INTEGRATION_TESTS="${RUN_DB_INTEGRATION_TESTS:-1}"
 
 echo "==> Executing test suite inside Docker (test-runner service)..."
 
-$DC run --rm \
+$DC run --rm -T \
   -e "RUN_DB_INTEGRATION_TESTS=${RUN_DB_INTEGRATION_TESTS}" \
   test-runner \
   sh -c '
     set -e
+
+    run_with_timeout() {
+      local seconds="$1"
+      shift
+      if timeout "${seconds}" "$@"; then
+        return 0
+      fi
+      local rc=$?
+      if [ "${rc}" -eq 124 ]; then
+        echo "ERROR: Command timed out after ${seconds}s: $*"
+      fi
+      return "${rc}"
+    }
 
     echo "--- Installing backend dependencies ---"
     (cd /workspace/backend && npm ci)
@@ -35,17 +48,17 @@ $DC run --rm \
     cd /workspace
 
     echo "--- Running Unit Tests ---"
-    node --test --test-concurrency=1 unit_tests/*.test.js
+    run_with_timeout 900 node --test --test-concurrency=1 unit_tests/*.test.js
 
     echo "--- Running API Tests ---"
-    node --test --test-concurrency=1 API_tests/*.api.test.js
+    run_with_timeout 900 node --test --test-concurrency=1 API_tests/*.api.test.js
 
     echo "--- Running Integration Tests ---"
     if [ -z "${RUN_DB_INTEGRATION_TESTS:-}" ]; then
       export RUN_DB_INTEGRATION_TESTS=1
       echo "RUN_DB_INTEGRATION_TESTS not set. Defaulting to full DB integration verification."
     fi
-    if node --test --test-concurrency=1 integration_tests/*.test.js; then
+    if run_with_timeout 900 node --test --test-concurrency=1 integration_tests/*.test.js; then
       echo "Integration boundary: full DB integration executed."
     else
       echo "Integration boundary: DB prerequisites missing or integration failed."
@@ -54,10 +67,10 @@ $DC run --rm \
     fi
 
     echo "--- Running Frontend Tests ---"
-    (cd /workspace/frontend && npm run test)
+    run_with_timeout 900 sh -c "cd /workspace/frontend && npm run test"
 
     echo "--- Building Frontend ---"
-    (cd /workspace/frontend && npm run build)
+    run_with_timeout 600 sh -c "cd /workspace/frontend && npm run build"
   '
 
 echo "==> All tests completed successfully."

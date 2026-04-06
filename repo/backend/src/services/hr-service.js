@@ -16,7 +16,10 @@ const candidateUploadTokenTtlSeconds = 60 * 60 * 24;
 function parseUploadToken(token) {
   try {
     return jwt.verify(token, config.jwtSecret);
-  } catch {
+  } catch (err) {
+    if (err?.name === "TokenExpiredError" || err?.name === "JsonWebTokenError") {
+      return null;
+    }
     return null;
   }
 }
@@ -229,7 +232,9 @@ export async function consumeCandidateUploadToken(token, candidateId) {
   const [result] = await pool.execute(
     `UPDATE candidate_upload_tokens
      SET status = 'used'
-     WHERE jti = ? AND status = 'unused' AND expires_at > NOW()`,
+     WHERE jti = ?
+       AND status IN ('unused', 'reserved')
+       AND expires_at > NOW()`,
     [payload.jti]
   );
   if (result.affectedRows === 0) return null;

@@ -261,7 +261,7 @@ test("candidate upload token replay is blocked after first successful use", asyn
     if (sql.includes("FROM sessions s")) {
       return [[{
         id: "sess-upload-2", user_id: 20, last_activity_at: new Date(),
-        username: "clerk2", role: "CLERK", site_id: 1, department_id: 1,
+        username: "hr2", role: "HR", site_id: 1, department_id: 1,
         sensitive_data_view: 0, has_sensitive_permission: 0
       }]];
     }
@@ -308,6 +308,7 @@ test("candidate upload token replay is blocked after first successful use", asyn
   const replayBody = await replayRes.json();
   assert.equal(replayRes.status, 403);
   assert.match(replayBody.error, /authorized user or valid candidate upload token/);
+  assert.doesNotMatch(replayBody.error, /Insufficient role/i);
 
   await new Promise((resolve) => server.close(resolve));
   pool.execute = originalExecute;
@@ -326,7 +327,7 @@ test("candidate upload rejects expired token", async () => {
     if (sql.includes("FROM sessions s")) {
       return [[{
         id: "sess-upload-3", user_id: 20, last_activity_at: new Date(),
-        username: "clerk2", role: "CLERK", site_id: 1, department_id: 1,
+        username: "hr2", role: "HR", site_id: 1, department_id: 1,
         sensitive_data_view: 0, has_sensitive_permission: 0
       }]];
     }
@@ -347,6 +348,7 @@ test("candidate upload rejects expired token", async () => {
   const body = await response.json();
   assert.equal(response.status, 403);
   assert.match(body.error, /authorized user or valid candidate upload token/);
+  assert.doesNotMatch(body.error, /Insufficient role/i);
 
   await new Promise((resolve) => server.close(resolve));
   pool.execute = originalExecute;

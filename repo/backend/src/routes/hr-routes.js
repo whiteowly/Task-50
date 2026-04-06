@@ -12,11 +12,11 @@ import {
   canActorAttachToCandidate,
   consumeCandidateUploadToken,
   createCandidateApplication,
-  getCandidate,
-  verifyCandidateUploadToken
+  getCandidate
 } from "../services/hr-service.js";
 
 const router = new Router({ prefix: "/api/hr" });
+const uploadTokenErrorMessage = "authorized user or valid candidate upload token";
 
 router.get("/forms/application", requireAuth, async (ctx) => {
   const [rows] = await pool.execute(
@@ -37,12 +37,17 @@ router.post("/applications/:id/attachments", requireAuth, requireRoles(["HR", "A
 
   const candidateId = ctx.params.id;
   const uploadToken = ctx.headers["x-candidate-upload-token"];
-  const tokenAuthorized = await verifyCandidateUploadToken(uploadToken, candidateId);
-  const consumedToken = tokenAuthorized ? await consumeCandidateUploadToken(uploadToken, candidateId) : null;
   const actorAuthorized = await canActorAttachToCandidate(candidateId, actor);
+  const consumedToken = uploadToken
+    ? await consumeCandidateUploadToken(uploadToken, candidateId)
+    : null;
 
-  if ((!tokenAuthorized || !consumedToken) && !actorAuthorized) {
-    throw new AppError(403, "Attachment upload requires authorized user or valid candidate upload token");
+  if (uploadToken && !consumedToken) {
+    throw new AppError(403, uploadTokenErrorMessage);
+  }
+
+  if (!uploadToken && !actorAuthorized) {
+    throw new AppError(403, uploadTokenErrorMessage);
   }
 
   ctx.body = await attachCandidateFile(candidateId, file, actor);
