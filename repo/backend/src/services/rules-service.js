@@ -54,10 +54,10 @@ export async function createRuleVersion(input, actor) {
       conn
     });
 
-    const markedForRecalc = await markScoresForRecalc(result.insertId, actor, conn, {
+    const markedForRecalc = await recalculateScoresForRuleVersion(result.insertId, actor, conn, {
       failWhenEmpty: false,
       auditRuleVersion: true,
-      auditPayload: { autoRecalculateTriggered: true }
+      auditPayload: { recalculationExecuted: true, trigger: "RULE_VERSION_CREATED" }
     });
 
     return { id: result.insertId, markedForRecalc };
@@ -134,18 +134,29 @@ function chooseScore(scores, policy) {
 
 export async function backtrackRecalculate(ruleVersionId, actor) {
   return withTx(async (conn) => {
-    const markedForRecalc = await markScoresForRecalc(ruleVersionId, actor, conn, {
+    const markedForRecalc = await recalculateScoresForRuleVersion(ruleVersionId, actor, conn, {
       failWhenEmpty: true,
       auditRuleVersion: true,
-      auditPayload: { recalculationRequested: true }
+      auditPayload: { recalculationExecuted: true, trigger: "RULE_VERSION_BACKTRACK" }
     });
     return { markedForRecalc };
   });
 }
 
-async function markScoresForRecalc(ruleVersionId, actor, conn, options) {
+async function recalculateScoresForRuleVersion(ruleVersionId, actor, conn, options) {
+  const [[ruleVersion]] = await conn.execute(
+    `SELECT id, weights_json
+     FROM scoring_rule_versions
+     WHERE id = ?`,
+    [ruleVersionId]
+  );
+  assert(ruleVersion, 404, "Rule version not found");
+
+  const weights = JSON.parse(ruleVersion.weights_json);
+
   const [rows] = await conn.execute(
-    `SELECT id, candidate_id, credit_hours
+    `SELECT id, candidate_id, coursework_score, midterm_score, final_score,
+            weighted_score, gpa, credit_hours, quality_points
      FROM qualification_scores
      WHERE rule_version_id = ?`,
     [ruleVersionId]
@@ -155,19 +166,37 @@ async function markScoresForRecalc(ruleVersionId, actor, conn, options) {
   }
 
   for (const row of rows) {
+    const weightedScore =
+      Number(row.coursework_score) * Number(weights.coursework) +
+      Number(row.midterm_score) * Number(weights.midterm) +
+      Number(row.final_score) * Number(weights.final);
+    const gpa = toGpa(weightedScore);
+    const qualityPoints = gpa * Number(row.credit_hours || 0);
+
     await conn.execute(
       `UPDATE qualification_scores
-       SET recalculation_pending = 1
+       SET weighted_score = ?, gpa = ?, quality_points = ?, recalculation_pending = 0
        WHERE id = ?`,
-      [row.id]
+      [weightedScore, gpa, qualityPoints, row.id]
     );
     await writeAudit({
       actorUserId: actor.id,
       action: "UPDATE",
       entityType: "qualification_score",
       entityId: row.id,
-      beforeValue: { recalculationPending: false, ruleVersionId: Number(ruleVersionId) },
-      afterValue: { recalculationPending: true, ruleVersionId: Number(ruleVersionId) },
+      beforeValue: {
+        ruleVersionId: Number(ruleVersionId),
+        weightedScore: Number(row.weighted_score),
+        gpa: Number(row.gpa),
+        qualityPoints: Number(row.quality_points)
+      },
+      afterValue: {
+        ruleVersionId: Number(ruleVersionId),
+        weightedScore,
+        gpa,
+        qualityPoints,
+        recalculationExecuted: true
+      },
       conn
     });
   }

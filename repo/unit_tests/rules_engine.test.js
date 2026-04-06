@@ -22,6 +22,9 @@ test("createRuleVersion persists weights and writes audit", async () => {
       if (sql.includes("INSERT INTO scoring_rule_versions")) {
         return [{ insertId: 5 }];
       }
+      if (sql.includes("FROM scoring_rule_versions")) {
+        return [[{ id: 5, weights_json: JSON.stringify({ coursework: 0.4, midterm: 0.2, final: 0.4 }) }]];
+      }
       if (sql.includes("FROM qualification_scores")) {
         selectSeen = true;
         return [[]];
@@ -88,7 +91,7 @@ test("scoreQualification applies highest-score policy and GPA conversion", async
   pool.execute = originalExecute;
 });
 
-test("backtrackRecalculate marks all records pending and audits updates", async () => {
+test("backtrackRecalculate recalculates all records and audits updates", async () => {
   let updateCount = 0;
   let auditCount = 0;
   const conn = {
@@ -96,11 +99,38 @@ test("backtrackRecalculate marks all records pending and audits updates", async 
     async commit() {},
     async rollback() {},
     release() {},
-    async execute(sql) {
+    async execute(sql, params) {
+      if (sql.includes("FROM scoring_rule_versions")) {
+        return [[{ id: 3, weights_json: JSON.stringify({ coursework: 0.4, midterm: 0.2, final: 0.4 }) }]];
+      }
       if (sql.includes("FROM qualification_scores")) {
-        return [[{ id: 1 }, { id: 2 }]];
+        return [[
+          {
+            id: 1,
+            candidate_id: 10,
+            coursework_score: 80,
+            midterm_score: 70,
+            final_score: 90,
+            weighted_score: 0,
+            gpa: 0,
+            credit_hours: 3,
+            quality_points: 0
+          },
+          {
+            id: 2,
+            candidate_id: 11,
+            coursework_score: 65,
+            midterm_score: 72,
+            final_score: 78,
+            weighted_score: 0,
+            gpa: 0,
+            credit_hours: 3,
+            quality_points: 0
+          }
+        ]];
       }
       if (sql.includes("UPDATE qualification_scores")) {
+        assert.equal(params.length, 4);
         updateCount += 1;
         return [{ affectedRows: 1 }];
       }

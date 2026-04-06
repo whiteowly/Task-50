@@ -4,7 +4,7 @@ import LoginView from "./views/LoginView.vue";
 import WorkspaceView from "./views/WorkspaceView.vue";
 
 const rolePanels = {
-  ADMIN: new Set(["overview", "search", "notifications", "audit"]),
+  ADMIN: new Set(["overview", "search", "notifications", "audit", "candidates", "candidatePortal"]),
   CLERK: new Set(["overview", "dock", "receiving", "putaway", "search"]),
   PLANNER: new Set(["overview", "mps", "mrp", "workorders", "adjustments", "search"]),
   PLANNER_SUPERVISOR: new Set(["overview", "mps", "mrp", "workorders", "adjustments", "search"]),
@@ -12,6 +12,8 @@ const rolePanels = {
   INTERVIEWER: new Set(["overview", "candidateReview", "notifications", "search"]),
   CANDIDATE: new Set(["overview", "candidatePortal"])
 };
+
+const hrProtectedPanels = new Set(["candidates"]);
 
 function requestedPanel(to) {
   const raw = to.query?.panel;
@@ -44,6 +46,9 @@ router.beforeEach(async (to) => {
       return "/login";
     }
     const panel = requestedPanel(to);
+    if (hrProtectedPanels.has(panel) && !["ADMIN", "HR"].includes(auth.role)) {
+      return { path: "/", query: { panel: "overview" } };
+    }
     if (!allowedPanels.has(panel)) {
       return { path: "/", query: { panel: "overview" } };
     }

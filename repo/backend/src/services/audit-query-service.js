@@ -1,5 +1,13 @@
 import { pool } from "../db.js";
 
+function parseAuditValue(raw) {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch { return raw; }
+  }
+  return structuredClone ? structuredClone(raw) : JSON.parse(JSON.stringify(raw));
+}
+
 function maskValue(key, value, canViewSensitive) {
   if (canViewSensitive) return value;
   if (/ssn|dob|password|token|authorization/i.test(key)) {
@@ -8,18 +16,40 @@ function maskValue(key, value, canViewSensitive) {
   return value;
 }
 
+function sanitizeStringifiedJson(input, canViewSensitive) {
+  if (typeof input !== "string") return input;
+  try {
+    const parsed = JSON.parse(input);
+    if (!parsed || typeof parsed !== "object") return input;
+    return JSON.stringify(sanitizeObject(parsed, canViewSensitive));
+  } catch {
+    return input;
+  }
+}
+
 function sanitizeObject(input, canViewSensitive) {
-  if (!input || typeof input !== "object") return input;
+  if (!input || typeof input !== "object") {
+    return sanitizeStringifiedJson(input, canViewSensitive);
+  }
+
   if (Array.isArray(input)) {
     return input.map((item) => sanitizeObject(item, canViewSensitive));
   }
+
   const output = {};
   for (const [key, value] of Object.entries(input)) {
+    if (!canViewSensitive && /ssn|dob|password|token|authorization/i.test(key)) {
+      output[key] = "[MASKED]";
+      continue;
+    }
+
     if (value && typeof value === "object") {
       output[key] = sanitizeObject(value, canViewSensitive);
       continue;
     }
-    output[key] = maskValue(key, value, canViewSensitive);
+
+    const parsedValue = sanitizeStringifiedJson(value, canViewSensitive);
+    output[key] = maskValue(key, parsedValue, canViewSensitive);
   }
   return output;
 }
@@ -62,8 +92,8 @@ export async function listAuditLogs(actor, query) {
 
   const canViewSensitive = Boolean(actor.sensitiveDataView);
   const data = rows.map((row) => {
-    const beforeObj = row.before_value ? JSON.parse(JSON.stringify(row.before_value)) : null;
-    const afterObj = row.after_value ? JSON.parse(JSON.stringify(row.after_value)) : null;
+    const beforeObj = parseAuditValue(row.before_value);
+    const afterObj = parseAuditValue(row.after_value);
     return {
       id: row.id,
       actorUserId: row.actor_user_id,

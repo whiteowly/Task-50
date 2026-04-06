@@ -318,6 +318,9 @@ test("createCandidateApplication returns upload token", async () => {
     if (sql.includes("FROM candidates WHERE full_name")) {
       return [[]];
     }
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) {
+      return [{ affectedRows: 1 }];
+    }
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 

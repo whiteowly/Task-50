@@ -413,6 +413,14 @@ CREATE TABLE IF NOT EXISTS qualification_scores (
   FOREIGN KEY (rule_version_id) REFERENCES scoring_rule_versions(id)
 );
 
+CREATE TABLE IF NOT EXISTS candidate_upload_tokens (
+  jti VARCHAR(36) PRIMARY KEY,
+  candidate_id INT NOT NULL,
+  status ENUM('unused','reserved','used') DEFAULT 'unused',
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   actor_user_id BIGINT NULL,

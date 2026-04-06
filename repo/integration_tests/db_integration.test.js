@@ -3,6 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import { publishEvent } from "../backend/src/services/notification-service.js";
+import { listAuditLogs } from "../backend/src/services/audit-query-service.js";
+import {
+  issueCandidateUploadToken,
+  verifyCandidateUploadToken,
+  reserveCandidateUploadToken,
+  consumeReservedCandidateUploadToken
+} from "../backend/src/services/hr-service.js";
 import app from "../backend/src/app.js";
 import { pool } from "../backend/src/db.js";
 import { runDbPreflightChecks } from "./db_preflight.js";
@@ -258,5 +265,148 @@ if (!dbIntegrationEnabled) {
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+
+  test("integration: audit_logs immutability trigger rejects UPDATE and DELETE", async () => {
+    const [inserted] = await pool.execute(
+      `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, before_value, after_value)
+       VALUES (NULL, 'TEST', 'integration_test', ?, NULL, '{"test":true}')`,
+      [`immut-${Date.now()}`]
+    );
+    const logId = inserted.insertId;
+
+    await assert.rejects(
+      () => pool.execute("UPDATE audit_logs SET action = 'MODIFIED' WHERE id = ?", [logId]),
+      (err) => {
+        assert.ok(err.message.includes("audit_logs is immutable"));
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => pool.execute("DELETE FROM audit_logs WHERE id = ?", [logId]),
+      (err) => {
+        assert.ok(err.message.includes("audit_logs is immutable"));
+        return true;
+      }
+    );
+  });
+
+  test("integration: sensitive-field masking in audit query service with real DB rows", async () => {
+    const entityId = `mask-${Date.now()}`;
+    await pool.execute(
+      `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, before_value, after_value)
+       VALUES (NULL, 'UPDATE', 'candidate', ?, ?, ?)`,
+      [
+        entityId,
+        JSON.stringify({ ssn: "123-45-6789", name: "Alice" }),
+        JSON.stringify({ dob: "1990-01-01", name: "Alice" })
+      ]
+    );
+
+    const resultMasked = await listAuditLogs(
+      { sensitiveDataView: false },
+      { entityType: "candidate", page: 1, pageSize: 100 }
+    );
+    const maskedRow = resultMasked.data.find((r) => r.entityId === entityId);
+    assert.ok(maskedRow, "Audit row should be returned");
+    assert.equal(maskedRow.beforeValue.ssn, "[MASKED]");
+    assert.equal(maskedRow.beforeValue.name, "Alice");
+    assert.equal(maskedRow.afterValue.dob, "[MASKED]");
+    assert.equal(maskedRow.afterValue.name, "Alice");
+
+    const resultVisible = await listAuditLogs(
+      { sensitiveDataView: true },
+      { entityType: "candidate", page: 1, pageSize: 100 }
+    );
+    const visibleRow = resultVisible.data.find((r) => r.entityId === entityId);
+    assert.ok(visibleRow);
+    assert.equal(visibleRow.beforeValue.ssn, "123-45-6789");
+    assert.equal(visibleRow.afterValue.dob, "1990-01-01");
+  });
+
+  test("integration: site-isolation for receipt access returns 403 for wrong site", async () => {
+    const { server, baseUrl } = await startServer();
+    try {
+      const adminLogin = await login(baseUrl, adminUsername, adminPassword);
+      const clerkLogin = await login(baseUrl, clerkUsername, clerkPassword);
+
+      const [[clerkUser]] = await pool.execute(
+        "SELECT id, site_id FROM users WHERE username = ?",
+        [clerkUsername]
+      );
+
+      const otherSiteId = Number(clerkUser.site_id) === 1 ? 2 : 1;
+
+      const [existingSite] = await pool.execute(
+        "SELECT id FROM receipts WHERE site_id = ? LIMIT 1",
+        [otherSiteId]
+      );
+
+      let receiptId;
+      if (existingSite.length) {
+        receiptId = existingSite[0].id;
+      } else {
+        const createRes = await fetch(`${baseUrl}/api/receiving/receipts`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${adminLogin.token}`
+          },
+          body: JSON.stringify({
+            siteId: otherSiteId,
+            poNumber: `PO-SITE-ISO-${Date.now()}`,
+            lines: [
+              {
+                poLineNo: "1",
+                sku: "ISO-SKU-1",
+                lotNo: "ISO-LOT-1",
+                qtyExpected: 5,
+                qtyReceived: 5,
+                inspectionStatus: "PASS"
+              }
+            ]
+          })
+        });
+        const createBody = await createRes.json();
+        assert.equal(createRes.status, 200);
+        receiptId = createBody.id;
+      }
+
+      const closeRes = await fetch(`${baseUrl}/api/receiving/receipts/${receiptId}/close`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${clerkLogin.token}` }
+      });
+      assert.equal(closeRes.status, 403);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test("integration: upload token lifecycle — issue, reserve, consume, replay rejected", async () => {
+    const fakeCandidateId = 999999;
+    await pool.execute(
+      `INSERT IGNORE INTO candidates (id, full_name, dob_enc, ssn_last4_enc, source)
+       VALUES (?, 'Token Test', 'enc', 'enc', 'PORTAL')`,
+      [fakeCandidateId]
+    );
+
+    const token = await issueCandidateUploadToken(fakeCandidateId);
+    assert.equal(typeof token, "string");
+
+    const verified = await verifyCandidateUploadToken(token, fakeCandidateId);
+    assert.equal(verified, true);
+
+    const reserved = await reserveCandidateUploadToken(token, fakeCandidateId);
+    assert.ok(reserved);
+    assert.ok(reserved.jti);
+
+    await consumeReservedCandidateUploadToken(reserved.jti);
+
+    const replayVerify = await verifyCandidateUploadToken(token, fakeCandidateId);
+    assert.equal(replayVerify, false);
+
+    const replayReserve = await reserveCandidateUploadToken(token, fakeCandidateId);
+    assert.equal(replayReserve, null);
   });
 }

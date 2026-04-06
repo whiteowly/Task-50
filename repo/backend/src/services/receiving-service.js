@@ -21,7 +21,7 @@ export async function scheduleDockAppointment(input, actor) {
   assert((end - start) / (1000 * 60) === 30, 400, "Only 30-minute windows are allowed");
   assert(start.getMinutes() === 0 || start.getMinutes() === 30, 400, "Start must be at :00 or :30");
 
-  if (actor.role === "CLERK" && actor.siteId !== input.siteId) {
+  if (actor.role === "CLERK" && Number(actor.siteId) !== Number(input.siteId)) {
     throw new AppError(403, "Clerks can schedule only for their site");
   }
 
@@ -59,7 +59,7 @@ export async function scheduleDockAppointment(input, actor) {
 export async function createReceipt(input, actor) {
   assert(input.poNumber, 400, "poNumber required");
   assert(Array.isArray(input.lines) && input.lines.length > 0, 400, "lines required");
-  if (actor.role === "CLERK" && actor.siteId !== input.siteId) {
+  if (actor.role === "CLERK" && Number(actor.siteId) !== Number(input.siteId)) {
     throw new AppError(403, "Clerks can post only for their site");
   }
 
@@ -271,8 +271,8 @@ async function getReceiptForActor(receiptId, actor) {
   );
   assert(rows.length, 404, "Receipt not found");
   const receipt = rows[0];
-  if (actor.role === "CLERK") {
-    assert(Number(actor.siteId) === Number(receipt.site_id), 403, "Clerks can only manage documents for their site");
+  if (actor.role !== "ADMIN" && actor.siteId) {
+    assert(Number(actor.siteId) === Number(receipt.site_id), 403, "You can only manage documents for your assigned site");
   }
   return receipt;
 }

@@ -26,8 +26,8 @@ test("POST /api/hr/applications/:id/attachments rejects unauthenticated upload",
     method: "POST"
   });
   const body = await response.json();
-  assert.equal(response.status, 403);
-  assert.match(body.error, /Attachment upload requires authorized user or valid candidate upload token/);
+  assert.equal(response.status, 401);
+  assert.match(body.error, /Authentication required/);
   await new Promise((resolve) => server.close(resolve));
 });
 
@@ -516,6 +516,8 @@ test("POST /api/receiving/receipts captures inspection status per line", async (
 });
 
 test("POST /api/hr/applications creates candidate and returns upload token", async () => {
+  const authToken = jwt.sign({ sub: 2, sessionId: "sess-app-create" }, config.jwtSecret, { expiresIn: 3600 });
+
   pool.execute = async (sql) => {
     if (sql.includes("INSERT INTO audit_logs")) {
       return [{ insertId: 1 }];
@@ -529,6 +531,15 @@ test("POST /api/hr/applications creates candidate and returns upload token", asy
     if (sql.includes("FROM candidates WHERE full_name")) {
       return [[]];
     }
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-app-create", user_id: 2, last_activity_at: new Date(),
+        username: "hr1", role: "HR", site_id: 1, department_id: 1,
+        sensitive_data_view: 0, has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) return [{ affectedRows: 1 }];
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 
@@ -564,7 +575,7 @@ test("POST /api/hr/applications creates candidate and returns upload token", asy
   const { server, baseUrl } = await startServer();
   const response = await fetch(`${baseUrl}/api/hr/applications`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
     body: JSON.stringify({
       fullName: "Alex Applicant",
       dob: "1994-01-15",
@@ -584,6 +595,7 @@ test("POST /api/hr/applications creates candidate and returns upload token", asy
 });
 
 test("POST /api/hr/applications repeated submission sets duplicateFlag", async () => {
+  const authToken = jwt.sign({ sub: 2, sessionId: "sess-app-repeat" }, config.jwtSecret, { expiresIn: 3600 });
   const savedCandidates = [];
   let nextId = 400;
 
@@ -597,6 +609,15 @@ test("POST /api/hr/applications repeated submission sets duplicateFlag", async (
     if (sql.includes("FROM candidates WHERE full_name")) {
       return [savedCandidates.filter((row) => row.full_name === params[0])];
     }
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-app-repeat", user_id: 2, last_activity_at: new Date(),
+        username: "hr1", role: "HR", site_id: 1, department_id: 1,
+        sensitive_data_view: 0, has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) return [{ affectedRows: 1 }];
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 
@@ -646,7 +667,7 @@ test("POST /api/hr/applications repeated submission sets duplicateFlag", async (
 
   const firstRes = await fetch(`${baseUrl}/api/hr/applications`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
     body: JSON.stringify(payload)
   });
   const firstBody = await firstRes.json();
@@ -655,7 +676,7 @@ test("POST /api/hr/applications repeated submission sets duplicateFlag", async (
 
   const secondRes = await fetch(`${baseUrl}/api/hr/applications`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
     body: JSON.stringify(payload)
   });
   const secondBody = await secondRes.json();
@@ -668,6 +689,7 @@ test("POST /api/hr/applications repeated submission sets duplicateFlag", async (
 });
 
 test("POST /api/hr/applications flags duplicate for mixed-type ssnLast4 inputs", async () => {
+  const authToken = jwt.sign({ sub: 2, sessionId: "sess-app-mixed" }, config.jwtSecret, { expiresIn: 3600 });
   const savedCandidates = [];
   let nextId = 500;
 
@@ -681,6 +703,15 @@ test("POST /api/hr/applications flags duplicate for mixed-type ssnLast4 inputs",
     if (sql.includes("FROM candidates WHERE full_name")) {
       return [savedCandidates.filter((row) => row.full_name === params[0])];
     }
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-app-mixed", user_id: 2, last_activity_at: new Date(),
+        username: "hr1", role: "HR", site_id: 1, department_id: 1,
+        sensitive_data_view: 0, has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) return [{ affectedRows: 1 }];
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 
@@ -723,7 +754,7 @@ test("POST /api/hr/applications flags duplicate for mixed-type ssnLast4 inputs",
   const { server, baseUrl } = await startServer();
   const firstRes = await fetch(`${baseUrl}/api/hr/applications`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
     body: JSON.stringify({
       fullName: "Mixed Type Candidate",
       dob: "1992-12-31",
@@ -737,7 +768,7 @@ test("POST /api/hr/applications flags duplicate for mixed-type ssnLast4 inputs",
 
   const secondRes = await fetch(`${baseUrl}/api/hr/applications`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
     body: JSON.stringify({
       fullName: "Mixed Type Candidate",
       dob: "1992-12-31",

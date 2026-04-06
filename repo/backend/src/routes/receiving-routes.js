@@ -16,7 +16,7 @@ router.post(
   "/dock-appointments",
   requireAuth,
   requirePermission("DOCK_APPOINTMENT_WRITE"),
-  enforceAttributeRule((user, ctx) => user.role !== "CLERK" || user.siteId === ctx.request.body.siteId),
+  enforceAttributeRule((user, ctx) => user.role !== "CLERK" || Number(user.siteId) === Number(ctx.request.body.siteId)),
   async (ctx) => {
     ctx.body = await scheduleDockAppointment(ctx.request.body, ctx.state.user);
   }
@@ -26,7 +26,7 @@ router.post(
   "/receipts",
   requireAuth,
   requirePermission("RECEIPT_WRITE"),
-  enforceAttributeRule((user, ctx) => user.role !== "CLERK" || user.siteId === ctx.request.body.siteId),
+  enforceAttributeRule((user, ctx) => user.role !== "CLERK" || Number(user.siteId) === Number(ctx.request.body.siteId)),
   async (ctx) => {
     ctx.body = await createReceipt(ctx.request.body, ctx.state.user);
   }

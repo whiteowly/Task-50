@@ -151,15 +151,69 @@ test("interviewer can read assigned candidate but not unassigned", async () => {
 });
 
 test("candidate attachment upload succeeds with candidate upload token", async () => {
-  const uploadToken = issueCandidateUploadToken("201");
+  const authToken = jwt.sign({ sub: 2, sessionId: "sess-upload-1" }, config.jwtSecret, { expiresIn: 3600 });
+  const tokenStore = new Map();
 
-  pool.execute = async (sql) => {
+  pool.execute = async (sql, params) => {
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) {
+      tokenStore.set(params[0], { candidate_id: params[1], status: "unused", expires_at: params[2] });
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes("SELECT") && sql.includes("candidate_upload_tokens")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "unused") {
+        return [[{ jti: params[0], candidate_id: row.candidate_id, status: row.status, expires_at: row.expires_at }]];
+      }
+      return [[]];
+    }
+    if (sql.includes("UPDATE candidate_upload_tokens") && sql.includes("'reserved'")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "unused") { row.status = "reserved"; return [{ affectedRows: 1 }]; }
+      return [{ affectedRows: 0 }];
+    }
+    if (sql.includes("UPDATE candidate_upload_tokens") && sql.includes("'used'")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "reserved") { row.status = "used"; return [{ affectedRows: 1 }]; }
+      return [{ affectedRows: 0 }];
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const uploadToken = await issueCandidateUploadToken("201");
+
+  pool.execute = async (sql, params) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
     if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
     if (sql.includes("SELECT id, source FROM candidates WHERE id = ?")) return [[{ id: 201, source: "PORTAL" }]];
     if (sql.includes("INSERT INTO candidate_attachments")) return [{ affectedRows: 1 }];
     if (sql.includes("FROM application_attachment_requirements")) return [[{ classification: "RESUME" }]];
     if (sql.includes("FROM candidate_attachments")) return [[{ classification: "RESUME", count: 1 }]];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-upload-1", user_id: 2, last_activity_at: new Date(),
+        username: "hr1", role: "HR", site_id: 1, department_id: 1,
+        sensitive_data_view: 0, has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("SELECT") && sql.includes("candidate_upload_tokens")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "unused") {
+        return [[{ jti: params[0], candidate_id: row.candidate_id, status: row.status, expires_at: row.expires_at }]];
+      }
+      return [[]];
+    }
+    if (sql.includes("UPDATE candidate_upload_tokens") && sql.includes("'reserved'")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "unused") { row.status = "reserved"; return [{ affectedRows: 1 }]; }
+      return [{ affectedRows: 0 }];
+    }
+    if (sql.includes("UPDATE candidate_upload_tokens") && sql.includes("'used'")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "reserved") { row.status = "used"; return [{ affectedRows: 1 }]; }
+      return [{ affectedRows: 0 }];
+    }
+    if (sql.includes("FROM interviewer_candidate_assignments")) return [[]];
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 
@@ -170,6 +224,7 @@ test("candidate attachment upload succeeds with candidate upload token", async (
   const response = await fetch(`${baseUrl}/api/hr/applications/201/attachments`, {
     method: "POST",
     headers: {
+      authorization: `Bearer ${authToken}`,
       "x-candidate-upload-token": uploadToken
     },
     body: formData
@@ -183,15 +238,52 @@ test("candidate attachment upload succeeds with candidate upload token", async (
 });
 
 test("candidate upload token replay is blocked after first successful use", async () => {
-  const uploadToken = issueCandidateUploadToken("202");
+  const authToken = jwt.sign({ sub: 20, sessionId: "sess-upload-2" }, config.jwtSecret, { expiresIn: 3600 });
+  const tokenStore = new Map();
 
-  pool.execute = async (sql) => {
+  pool.execute = async (sql, params) => {
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) {
+      tokenStore.set(params[0], { candidate_id: params[1], status: "unused", expires_at: params[2] });
+      return [{ affectedRows: 1 }];
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const uploadToken = await issueCandidateUploadToken("202");
+
+  pool.execute = async (sql, params) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
     if (sql.includes("INSERT INTO search_documents")) return [{ affectedRows: 1 }];
     if (sql.includes("SELECT id, source FROM candidates WHERE id = ?")) return [[{ id: 202, source: "PORTAL" }]];
     if (sql.includes("INSERT INTO candidate_attachments")) return [{ affectedRows: 1 }];
     if (sql.includes("FROM application_attachment_requirements")) return [[{ classification: "RESUME" }]];
     if (sql.includes("FROM candidate_attachments")) return [[{ classification: "RESUME", count: 1 }]];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-upload-2", user_id: 20, last_activity_at: new Date(),
+        username: "clerk2", role: "CLERK", site_id: 1, department_id: 1,
+        sensitive_data_view: 0, has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("SELECT") && sql.includes("candidate_upload_tokens")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "unused") {
+        return [[{ jti: params[0], candidate_id: row.candidate_id, status: row.status, expires_at: row.expires_at }]];
+      }
+      return [[]];
+    }
+    if (sql.includes("UPDATE candidate_upload_tokens") && sql.includes("'reserved'")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "unused") { row.status = "reserved"; return [{ affectedRows: 1 }]; }
+      return [{ affectedRows: 0 }];
+    }
+    if (sql.includes("UPDATE candidate_upload_tokens") && sql.includes("'used'")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "reserved") { row.status = "used"; return [{ affectedRows: 1 }]; }
+      return [{ affectedRows: 0 }];
+    }
+    if (sql.includes("FROM interviewer_candidate_assignments")) return [[]];
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 
@@ -201,7 +293,7 @@ test("candidate upload token replay is blocked after first successful use", asyn
   firstUpload.append("file", new File(["png-bytes"], "resume.png", { type: "image/png" }));
   const firstRes = await fetch(`${baseUrl}/api/hr/applications/202/attachments`, {
     method: "POST",
-    headers: { "x-candidate-upload-token": uploadToken },
+    headers: { authorization: `Bearer ${authToken}`, "x-candidate-upload-token": uploadToken },
     body: firstUpload
   });
   assert.equal(firstRes.status, 200);
@@ -210,7 +302,7 @@ test("candidate upload token replay is blocked after first successful use", asyn
   replayUpload.append("file", new File(["png-bytes"], "resume2.png", { type: "image/png" }));
   const replayRes = await fetch(`${baseUrl}/api/hr/applications/202/attachments`, {
     method: "POST",
-    headers: { "x-candidate-upload-token": uploadToken },
+    headers: { authorization: `Bearer ${authToken}`, "x-candidate-upload-token": uploadToken },
     body: replayUpload
   });
   const replayBody = await replayRes.json();
@@ -222,6 +314,7 @@ test("candidate upload token replay is blocked after first successful use", asyn
 });
 
 test("candidate upload rejects expired token", async () => {
+  const authToken = jwt.sign({ sub: 20, sessionId: "sess-upload-3" }, config.jwtSecret, { expiresIn: 3600 });
   const expiredToken = jwt.sign(
     { purpose: "CANDIDATE_ATTACHMENT", candidateId: "203", jti: "expired-jti" },
     config.jwtSecret,
@@ -230,6 +323,15 @@ test("candidate upload rejects expired token", async () => {
 
   pool.execute = async (sql) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
+    if (sql.includes("FROM sessions s")) {
+      return [[{
+        id: "sess-upload-3", user_id: 20, last_activity_at: new Date(),
+        username: "clerk2", role: "CLERK", site_id: 1, department_id: 1,
+        sensitive_data_view: 0, has_sensitive_permission: 0
+      }]];
+    }
+    if (sql.includes("SET last_activity_at = NOW()")) return [{ affectedRows: 1 }];
+    if (sql.includes("FROM interviewer_candidate_assignments")) return [[]];
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 
@@ -239,7 +341,7 @@ test("candidate upload rejects expired token", async () => {
 
   const response = await fetch(`${baseUrl}/api/hr/applications/203/attachments`, {
     method: "POST",
-    headers: { "x-candidate-upload-token": expiredToken },
+    headers: { authorization: `Bearer ${authToken}`, "x-candidate-upload-token": expiredToken },
     body: formData
   });
   const body = await response.json();

@@ -4,8 +4,8 @@ services:
     container_name: forgeops-db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: forgeops
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE}
     ports:
       - "3306:3306"
     volumes:
@@ -32,11 +32,11 @@ services:
       PORT: 4000
       DB_HOST: db
       DB_PORT: 3306
-      DB_USER: root
-      DB_PASSWORD: password
-      DB_NAME: forgeops
-      JWT_SECRET: forgeops-docker-jwt-secret
-      ENCRYPTION_KEY_HEX: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      DB_USER: ${DB_USER:?Set DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      DB_NAME: ${DB_NAME:?Set DB_NAME}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      ENCRYPTION_KEY_HEX: ${ENCRYPTION_KEY_HEX:?Set ENCRYPTION_KEY_HEX}
     ports:
       - "4000:4000"
 
@@ -61,11 +61,11 @@ services:
       NODE_ENV: test
       DB_HOST: db
       DB_PORT: "3306"
-      DB_USER: root
-      DB_PASSWORD: password
-      DB_NAME: forgeops
-      JWT_SECRET: forgeops-docker-jwt-secret
-      ENCRYPTION_KEY_HEX: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      DB_USER: ${DB_USER:?Set DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      DB_NAME: ${DB_NAME:?Set DB_NAME}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      ENCRYPTION_KEY_HEX: ${ENCRYPTION_KEY_HEX:?Set ENCRYPTION_KEY_HEX}
     depends_on:
       db:
         condition: service_healthy

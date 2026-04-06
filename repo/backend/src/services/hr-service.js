@@ -12,15 +12,6 @@ import { upsertSearchDocument } from "./search-index-service.js";
 const allowedMimeTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
 const maxBytes = 20 * 1024 * 1024;
 const candidateUploadTokenTtlSeconds = 60 * 60 * 24;
-const candidateUploadTokenState = new Map();
-
-function pruneUploadTokenState(nowMs) {
-  for (const [jti, state] of candidateUploadTokenState) {
-    if (state.expiresAtMs <= nowMs || state.status === "used") {
-      candidateUploadTokenState.delete(jti);
-    }
-  }
-}
 
 function parseUploadToken(token) {
   try {
@@ -177,22 +168,21 @@ export async function createCandidateApplication(input, actor) {
     return {
       id: appId,
       duplicateFlag: duplicate,
-      uploadToken: issueCandidateUploadToken(appId),
+      uploadToken: await issueCandidateUploadToken(appId),
       attachmentCompleteness
     };
   });
 }
 
-export function issueCandidateUploadToken(candidateId) {
+export async function issueCandidateUploadToken(candidateId) {
   const jti = uuidv4();
-  const nowMs = Date.now();
-  const expiresAtMs = nowMs + candidateUploadTokenTtlSeconds * 1000;
-  pruneUploadTokenState(nowMs);
-  candidateUploadTokenState.set(jti, {
-    candidateId: String(candidateId),
-    expiresAtMs,
-    status: "unused"
-  });
+  const expiresAt = new Date(Date.now() + candidateUploadTokenTtlSeconds * 1000);
+
+  await pool.execute(
+    `INSERT INTO candidate_upload_tokens (jti, candidate_id, status, expires_at)
+     VALUES (?, ?, 'unused', ?)`,
+    [jti, candidateId, expiresAt]
+  );
 
   return jwt.sign(
     {
@@ -205,62 +195,58 @@ export function issueCandidateUploadToken(candidateId) {
   );
 }
 
-export function verifyCandidateUploadToken(token, candidateId) {
+export async function verifyCandidateUploadToken(token, candidateId) {
   if (!token) return false;
   const payload = parseUploadToken(token);
   if (!payload) return false;
-  const nowMs = Date.now();
-  pruneUploadTokenState(nowMs);
-  const tokenState = candidateUploadTokenState.get(payload.jti);
-  if (!tokenState) return false;
-  if (tokenState.expiresAtMs <= nowMs) {
-    candidateUploadTokenState.delete(payload.jti);
-    return false;
-  }
+
+  const [rows] = await pool.execute(
+    `SELECT jti, candidate_id, status, expires_at
+     FROM candidate_upload_tokens
+     WHERE jti = ? AND status = 'unused' AND expires_at > NOW()`,
+    [payload.jti]
+  );
+  if (!rows.length) return false;
+
   return (
     payload.purpose === "CANDIDATE_ATTACHMENT" &&
-    String(payload.candidateId) === String(candidateId) &&
-    tokenState.status === "unused"
+    String(payload.candidateId) === String(candidateId)
   );
 }
 
-export function reserveCandidateUploadToken(token, candidateId) {
+export async function consumeCandidateUploadToken(token, candidateId) {
   if (!token) return null;
   const payload = parseUploadToken(token);
   if (!payload) return null;
-  const nowMs = Date.now();
-  pruneUploadTokenState(nowMs);
-  const tokenState = candidateUploadTokenState.get(payload.jti);
-  if (!tokenState) return null;
+
   if (
     payload.purpose !== "CANDIDATE_ATTACHMENT" ||
-    String(payload.candidateId) !== String(candidateId) ||
-    tokenState.status !== "unused" ||
-    tokenState.expiresAtMs <= nowMs
+    String(payload.candidateId) !== String(candidateId)
   ) {
     return null;
   }
-  tokenState.status = "reserved";
-  candidateUploadTokenState.set(payload.jti, tokenState);
+
+  const [result] = await pool.execute(
+    `UPDATE candidate_upload_tokens
+     SET status = 'used'
+     WHERE jti = ? AND status = 'unused' AND expires_at > NOW()`,
+    [payload.jti]
+  );
+  if (result.affectedRows === 0) return null;
+
   return { jti: payload.jti, candidateId: String(candidateId) };
 }
 
-export function consumeReservedCandidateUploadToken(jti) {
-  if (!jti) return;
-  const tokenState = candidateUploadTokenState.get(jti);
-  if (!tokenState) return;
-  tokenState.status = "used";
-  candidateUploadTokenState.set(jti, tokenState);
+export async function reserveCandidateUploadToken(token, candidateId) {
+  return consumeCandidateUploadToken(token, candidateId);
 }
 
-export function releaseReservedCandidateUploadToken(jti) {
-  if (!jti) return;
-  const tokenState = candidateUploadTokenState.get(jti);
-  if (!tokenState) return;
-  if (tokenState.status === "reserved") {
-    tokenState.status = "unused";
-    candidateUploadTokenState.set(jti, tokenState);
-  }
+export async function consumeReservedCandidateUploadToken() {
+  return;
+}
+
+export async function releaseReservedCandidateUploadToken() {
+  return;
 }
 
 export async function canActorAttachToCandidate(candidateId, actor) {

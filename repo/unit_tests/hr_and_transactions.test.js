@@ -27,6 +27,9 @@ test("createCandidateApplication flags duplicate when name + dob + ssn4 match", 
     if (sql.includes("FROM candidates WHERE full_name")) {
       return [[{ id: 7, dob_enc: encryptString(dob), ssn_last4_enc: encryptString(ssnLast4) }]];
     }
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) {
+      return [{ affectedRows: 1 }];
+    }
     throw new Error(`Unexpected SQL: ${sql}`);
   };
 
@@ -84,6 +87,9 @@ test("createCandidateApplication marks repeated submissions as duplicate", async
     }
     if (sql.includes("FROM candidates WHERE full_name")) {
       return [storedCandidates.filter((row) => row.full_name === params[0])];
+    }
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) {
+      return [{ affectedRows: 1 }];
     }
     throw new Error(`Unexpected SQL: ${sql}`);
   };
@@ -160,6 +166,9 @@ test("createCandidateApplication treats numeric and string ssnLast4 as duplicate
     }
     if (sql.includes("FROM candidates WHERE full_name")) {
       return [storedCandidates.filter((row) => row.full_name === params[0])];
+    }
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) {
+      return [{ affectedRows: 1 }];
     }
     throw new Error(`Unexpected SQL: ${sql}`);
   };
@@ -353,16 +362,50 @@ test("audit immutability runtime rejects UPDATE and DELETE attempts", async () =
   pool.execute = originalExecute;
 });
 
-test("candidate upload token supports first use then blocks replay", () => {
-  const token = issueCandidateUploadToken("401");
+test("candidate upload token supports first use then blocks replay", async () => {
+  const tokenStore = new Map();
+  pool.execute = async (sql, params) => {
+    if (sql.includes("INSERT INTO candidate_upload_tokens")) {
+      tokenStore.set(params[0], { candidate_id: params[1], status: "unused", expires_at: params[2] });
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes("SELECT") && sql.includes("candidate_upload_tokens")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "unused") {
+        return [[{ jti: params[0], candidate_id: row.candidate_id, status: row.status, expires_at: row.expires_at }]];
+      }
+      return [[]];
+    }
+    if (sql.includes("UPDATE candidate_upload_tokens") && sql.includes("'reserved'")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "unused") {
+        row.status = "reserved";
+        return [{ affectedRows: 1 }];
+      }
+      return [{ affectedRows: 0 }];
+    }
+    if (sql.includes("UPDATE candidate_upload_tokens") && sql.includes("'used'")) {
+      const row = tokenStore.get(params[0]);
+      if (row && row.status === "reserved") {
+        row.status = "used";
+        return [{ affectedRows: 1 }];
+      }
+      return [{ affectedRows: 0 }];
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
 
-  const validBeforeUse = verifyCandidateUploadToken(token, "401");
+  const token = await issueCandidateUploadToken("401");
+
+  const validBeforeUse = await verifyCandidateUploadToken(token, "401");
   assert.equal(validBeforeUse, true);
 
-  const reservation = reserveCandidateUploadToken(token, "401");
+  const reservation = await reserveCandidateUploadToken(token, "401");
   assert.ok(reservation?.jti);
-  consumeReservedCandidateUploadToken(reservation.jti);
+  await consumeReservedCandidateUploadToken(reservation.jti);
 
-  const validAfterUse = verifyCandidateUploadToken(token, "401");
+  const validAfterUse = await verifyCandidateUploadToken(token, "401");
   assert.equal(validAfterUse, false);
+
+  pool.execute = originalExecute;
 });
