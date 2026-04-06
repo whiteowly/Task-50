@@ -238,15 +238,42 @@ export async function consumeCandidateUploadToken(token, candidateId) {
 }
 
 export async function reserveCandidateUploadToken(token, candidateId) {
-  return consumeCandidateUploadToken(token, candidateId);
+  if (!token) return null;
+  const payload = parseUploadToken(token);
+  if (!payload) return null;
+
+  if (
+    payload.purpose !== "CANDIDATE_ATTACHMENT" ||
+    String(payload.candidateId) !== String(candidateId)
+  ) {
+    return null;
+  }
+
+  const [result] = await pool.execute(
+    `UPDATE candidate_upload_tokens
+     SET status = 'reserved'
+     WHERE jti = ? AND status = 'unused' AND expires_at > NOW()`,
+    [payload.jti]
+  );
+  if (result.affectedRows === 0) return null;
+
+  return { jti: payload.jti, candidateId: String(candidateId) };
 }
 
-export async function consumeReservedCandidateUploadToken() {
-  return;
+export async function consumeReservedCandidateUploadToken(jti) {
+  if (!jti) return;
+  await pool.execute(
+    `UPDATE candidate_upload_tokens SET status = 'used' WHERE jti = ? AND status = 'reserved'`,
+    [jti]
+  );
 }
 
-export async function releaseReservedCandidateUploadToken() {
-  return;
+export async function releaseReservedCandidateUploadToken(jti) {
+  if (!jti) return;
+  await pool.execute(
+    `UPDATE candidate_upload_tokens SET status = 'unused' WHERE jti = ? AND status = 'reserved'`,
+    [jti]
+  );
 }
 
 export async function canActorAttachToCandidate(candidateId, actor) {

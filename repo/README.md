@@ -16,7 +16,7 @@ No manual dependency setup is required. The compose file provisions DB schema/se
 
 - Frontend (Nginx): `http://localhost:5173`
 - Backend API (Koa): `http://localhost:4000/api`
-- MySQL: `localhost:3306`
+- MySQL: `localhost:3307` (override with `MYSQL_HOST_PORT` in repo `.env`)
 
 ### Verify startup
 
