@@ -32,11 +32,11 @@ services:
       PORT: 4000
       DB_HOST: db
       DB_PORT: 3306
-      DB_USER: ${DB_USER:-root}
-      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
-      DB_NAME: ${DB_NAME:-${MYSQL_DATABASE:-forgeops}}
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
-      ENCRYPTION_KEY_HEX: ${ENCRYPTION_KEY_HEX:?Set ENCRYPTION_KEY_HEX}
+      DB_USER: root
+      DB_PASSWORD: ""
+      DB_NAME: forgeops
+      JWT_SECRET: local-dev-jwt-secret
+      ENCRYPTION_KEY_HEX: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     ports:
       - "4000:4000"
 
@@ -61,11 +61,11 @@ services:
       NODE_ENV: test
       DB_HOST: db
       DB_PORT: "3306"
-      DB_USER: ${DB_USER:-root}
-      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
-      DB_NAME: ${DB_NAME:-${MYSQL_DATABASE:-forgeops}}
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
-      ENCRYPTION_KEY_HEX: ${ENCRYPTION_KEY_HEX:?Set ENCRYPTION_KEY_HEX}
+      DB_USER: root
+      DB_PASSWORD: ""
+      DB_NAME: forgeops
+      JWT_SECRET: local-dev-jwt-secret
+      ENCRYPTION_KEY_HEX: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     depends_on:
       db:
         condition: service_healthy
