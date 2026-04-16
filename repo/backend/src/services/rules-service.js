@@ -72,7 +72,7 @@ export async function scoreQualification(input, actor) {
     [input.ruleVersionId]
   );
   assert(rule, 404, "Rule version not found");
-  const weights = JSON.parse(rule.weights_json);
+  const weights = typeof rule.weights_json === "string" ? JSON.parse(rule.weights_json) : rule.weights_json;
 
   const coursework = chooseScore(input.courseworkScores || [], rule.retake_policy);
   const midterm = chooseScore(input.midtermScores || [], rule.retake_policy);
@@ -152,7 +152,7 @@ async function recalculateScoresForRuleVersion(ruleVersionId, actor, conn, optio
   );
   assert(ruleVersion, 404, "Rule version not found");
 
-  const weights = JSON.parse(ruleVersion.weights_json);
+  const weights = typeof ruleVersion.weights_json === "string" ? JSON.parse(ruleVersion.weights_json) : ruleVersion.weights_json;
 
   const [rows] = await conn.execute(
     `SELECT id, candidate_id, coursework_score, midterm_score, final_score,

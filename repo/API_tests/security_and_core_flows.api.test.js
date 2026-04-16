@@ -8,6 +8,7 @@ import { pool } from "../backend/src/db.js";
 import { config } from "../backend/src/config.js";
 
 const originalExecute = pool.execute;
+const originalQuery = pool.query;
 const originalGetConnection = pool.getConnection;
 
 async function startServer() {
@@ -1589,7 +1590,7 @@ test("GET /api/notifications returns user-scoped notification inbox", async () =
   const token = jwt.sign({ sub: 41, sessionId: "sess-notif-list" }, config.jwtSecret, { expiresIn: 3600 });
   let scopedByUser = false;
 
-  pool.execute = async (sql, params) => {
+  const mockFn = async (sql, params) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
     if (sql.includes("FROM sessions s")) {
       return [[{
@@ -1614,6 +1615,8 @@ test("GET /api/notifications returns user-scoped notification inbox", async () =
     }
     throw new Error(`Unexpected SQL: ${sql}`);
   };
+  pool.execute = mockFn;
+  pool.query = mockFn;
 
   const { server, baseUrl } = await startServer();
   const response = await fetch(`${baseUrl}/api/notifications?page=1&pageSize=20`, {
@@ -1627,6 +1630,7 @@ test("GET /api/notifications returns user-scoped notification inbox", async () =
 
   await new Promise((resolve) => server.close(resolve));
   pool.execute = originalExecute;
+  pool.query = originalQuery;
 });
 
 test("GET /api/audit is denied for user without AUDIT_READ", async () => {
@@ -1665,7 +1669,7 @@ test("GET /api/audit is denied for user without AUDIT_READ", async () => {
 test("GET /api/audit returns masked audit shape when sensitive permission absent", async () => {
   const token = jwt.sign({ sub: 43, sessionId: "sess-audit-admin" }, config.jwtSecret, { expiresIn: 3600 });
 
-  pool.execute = async (sql, params) => {
+  const mockFn = async (sql, params) => {
     if (sql.includes("INSERT INTO audit_logs")) return [{ insertId: 1 }];
     if (sql.includes("FROM sessions s")) {
       return [[{
@@ -1701,6 +1705,8 @@ test("GET /api/audit returns masked audit shape when sensitive permission absent
     }
     throw new Error(`Unexpected SQL: ${sql} params=${JSON.stringify(params)}`);
   };
+  pool.execute = mockFn;
+  pool.query = mockFn;
 
   const { server, baseUrl } = await startServer();
   const response = await fetch(`${baseUrl}/api/audit?page=1&pageSize=20`, {
@@ -1715,4 +1721,5 @@ test("GET /api/audit returns masked audit shape when sensitive permission absent
 
   await new Promise((resolve) => server.close(resolve));
   pool.execute = originalExecute;
+  pool.query = originalQuery;
 });

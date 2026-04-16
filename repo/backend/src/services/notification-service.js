@@ -355,7 +355,7 @@ export async function listNotifications(actor, query) {
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const [rows] = await pool.execute(
+  const [rows] = await pool.query(
     `SELECT id, user_id, event_type, message, status, deliver_after, delivered_at, created_at
      FROM notifications
      ${whereSql}
@@ -363,7 +363,7 @@ export async function listNotifications(actor, query) {
      LIMIT ? OFFSET ?`,
     [...params, pageSize, offset]
   );
-  const [[countRow]] = await pool.execute(
+  const [[countRow]] = await pool.query(
     `SELECT COUNT(*) AS total
      FROM notifications
      ${whereSql}`,

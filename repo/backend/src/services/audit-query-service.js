@@ -75,7 +75,7 @@ export async function listAuditLogs(actor, query) {
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-  const [rows] = await pool.execute(
+  const [rows] = await pool.query(
     `SELECT id, actor_user_id, action, entity_type, entity_id, before_value, after_value, created_at
      FROM audit_logs
      ${whereSql}
@@ -83,7 +83,7 @@ export async function listAuditLogs(actor, query) {
      LIMIT ? OFFSET ?`,
     [...params, pageSize, offset]
   );
-  const [[countRow]] = await pool.execute(
+  const [[countRow]] = await pool.query(
     `SELECT COUNT(*) AS total
      FROM audit_logs
      ${whereSql}`,
